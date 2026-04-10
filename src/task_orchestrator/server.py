@@ -4,6 +4,7 @@ import json
 from mcp.server.fastmcp import FastMCP
 from . import db, engine
 from .schemas import get_schemas, load_schemas, get_schema_for_item
+from .prompts import register_prompts
 
 mcp = FastMCP(
     "task-orchestrator",
@@ -306,6 +307,7 @@ def manage_schemas(operation: str = "list", schema_name: str = "", item_id: str 
 
 def main():
     db.init_db()
+    register_prompts(mcp)
     mcp.run()
 
 
