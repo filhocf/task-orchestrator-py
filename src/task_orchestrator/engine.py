@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .db import get_connection
+from .schemas import check_gate, should_skip_review, can_cancel, get_schema_for_item
 
 VALID_STATUSES = {"queue", "work", "review", "done", "blocked", "cancelled"}
 TERMINAL = {"done", "cancelled"}
@@ -211,6 +212,25 @@ def advance_item(item_id: str, trigger: str) -> dict:
                 titles = [b["title"] for b in blockers]
                 raise ValueError(f"Blocked by unfinished items: {', '.join(titles)}")
 
+        # Check note schema gates
+        if trigger in ("start", "complete"):
+            item_dict = _row_to_dict(row)
+            notes = [_row_to_dict(r) for r in conn.execute(
+                "SELECT * FROM notes WHERE item_id=?", (item_id,)).fetchall()]
+            gate = check_gate(item_dict, notes, new_status)
+            if not gate["can_advance"]:
+                missing_keys = [m["key"] for m in gate["missing"]]
+                raise ValueError(f"Gate check failed. Missing required notes: {', '.join(missing_keys)}"
+                                 + (f". Hint: {gate['guidance']}" if gate["guidance"] else ""))
+
+        # Check cancel permission (permanent lifecycle)
+        if trigger == "cancel" and not can_cancel(_row_to_dict(row)):
+            raise ValueError("Cannot cancel: item has permanent lifecycle")
+
+        # Auto-skip review for 'auto' lifecycle
+        if trigger == "start" and new_status == "review" and should_skip_review(_row_to_dict(row)):
+            new_status = "done"
+
         now = _now()
         conn.execute("UPDATE work_items SET status=?, updated_at=? WHERE id=?", (new_status, now, item_id))
         conn.commit()
@@ -249,6 +269,17 @@ def get_next_status(item_id: str, trigger: str) -> dict:
         if blockers:
             return {"can_advance": False, "reason": "Blocked by dependencies",
                     "blockers": [{"id": b["id"], "title": b["title"]} for b in blockers]}
+        # Check gates
+        if trigger in ("start", "complete"):
+            item_dict = _row_to_dict(row)
+            notes = [_row_to_dict(r) for r in conn.execute(
+                "SELECT * FROM notes WHERE item_id=?", (item_id,)).fetchall()]
+            gate = check_gate(item_dict, notes, TRANSITIONS[trigger][current])
+            if not gate["can_advance"]:
+                return {"can_advance": False, "reason": "Missing required notes",
+                        "missing": gate["missing"], "guidance": gate["guidance"]}
+        if trigger == "cancel" and not can_cancel(_row_to_dict(row)):
+            return {"can_advance": False, "reason": "Item has permanent lifecycle"}
         return {"can_advance": True, "current": current, "next": TRANSITIONS[trigger][current], "trigger": trigger}
     finally:
         conn.close()
@@ -330,6 +361,15 @@ def get_context(item_id: str | None = None, include_ancestors: bool = False) -> 
                       "can_advance": len(blockers) == 0 and item["status"] not in TERMINAL}
             if include_ancestors:
                 result["ancestors"] = get_ancestors(item_id)
+            # Add gate info if schema exists
+            if result["can_advance"]:
+                next_trigger = "start"
+                next_status = TRANSITIONS.get(next_trigger, {}).get(item["status"])
+                if next_status:
+                    gate = check_gate(item, notes, next_status)
+                    result["can_advance"] = gate["can_advance"]
+                    result["missing_notes"] = gate["missing"]
+                    result["guidance"] = gate["guidance"]
             return result
         # Global context
         counts = {}

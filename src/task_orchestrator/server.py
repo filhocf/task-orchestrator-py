@@ -3,6 +3,7 @@
 import json
 from mcp.server.fastmcp import FastMCP
 from . import db, engine
+from .schemas import get_schemas, load_schemas, get_schema_for_item
 
 mcp = FastMCP(
     "task-orchestrator",
@@ -250,6 +251,55 @@ def complete_tree(parent_id: str) -> str:
     """
     try:
         return _json(engine.complete_tree(parent_id))
+    except Exception as e:
+        return _err(e)
+
+
+@mcp.tool()
+def manage_schemas(operation: str = "list", schema_name: str = "", item_id: str = "") -> str:
+    """View note schemas and check gate status for items.
+
+    Operations:
+    - list: show all loaded schemas
+    - get: show a specific schema by name
+    - check: check gate status for an item (requires item_id)
+    - reload: reload schemas from config file
+    """
+    try:
+        if operation == "list":
+            return _json(get_schemas())
+        elif operation == "get":
+            schemas = get_schemas()
+            if schema_name not in schemas:
+                return _json({"error": f"Schema '{schema_name}' not found", "available": list(schemas.keys())})
+            return _json(schemas[schema_name])
+        elif operation == "check":
+            item = engine.get_item(item_id)
+            if not item:
+                return _json({"error": f"Item {item_id} not found"})
+            schema = get_schema_for_item(item.get("item_type", ""), item.get("tags", ""))
+            if not schema:
+                return _json({"has_schema": False, "can_advance": True})
+            from .db import get_connection
+            conn = get_connection()
+            try:
+                notes = [dict(r) for r in conn.execute(
+                    "SELECT * FROM notes WHERE item_id=?", (item_id,)).fetchall()]
+            finally:
+                conn.close()
+            from .schemas import check_gate
+            # Check gate for next natural transition
+            next_status = engine.TRANSITIONS.get("start", {}).get(item["status"])
+            if not next_status:
+                return _json({"has_schema": True, "schema": schema["name"],
+                              "status": item["status"], "can_advance": item["status"] in engine.TERMINAL})
+            gate = check_gate(item, notes, next_status)
+            return _json({"has_schema": True, "schema": schema["name"], "lifecycle": schema["lifecycle"],
+                          **gate})
+        elif operation == "reload":
+            result = load_schemas()
+            return _json({"reloaded": True, "schemas": list(result.keys())})
+        return _json({"error": f"Invalid operation: {operation}. Use: list, get, check, reload"})
     except Exception as e:
         return _err(e)
 
