@@ -135,6 +135,14 @@ def can_cancel(item: dict) -> bool:
     return schema["lifecycle"] != "permanent"
 
 
+def should_auto_reopen(item: dict) -> bool:
+    """Check if a terminal item should auto-reopen when a note is updated."""
+    schema = get_schema_for_item(item.get("item_type", ""), item.get("tags", ""))
+    if not schema:
+        return False
+    return schema["lifecycle"] == "auto-reopen"
+
+
 def _roles_before(current: str, target: str) -> set[str]:
     """Return the set of roles whose notes must be filled to reach target."""
     role_order = ["queue", "work", "review", "done"]

@@ -1,4 +1,3 @@
-"""Task Orchestrator — Python MCP server for AI agent work management.
+"""task-orchestrator-py — MCP server for AI agent work management."""
 
-Port of https://github.com/jpicklyk/task-orchestrator (Kotlin/Docker, MIT License).
-"""
+__version__ = "0.4.0"

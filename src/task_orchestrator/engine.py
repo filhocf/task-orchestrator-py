@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .db import get_connection
-from .schemas import check_gate, should_skip_review, can_cancel, get_schema_for_item
+from .schemas import check_gate, should_skip_review, can_cancel, get_schema_for_item, should_auto_reopen
 
 VALID_STATUSES = {"queue", "work", "review", "done", "blocked", "cancelled"}
 TERMINAL = {"done", "cancelled"}
@@ -286,12 +286,22 @@ def get_next_status(item_id: str, trigger: str) -> dict:
 
 
 def _get_unsatisfied_blockers(conn, item_id: str) -> list[dict]:
+    """Check blockers respecting unblock_at threshold.
+    Status order: queue(0) < work(1) < review(2) < done(3). cancelled counts as done."""
+    status_rank = {"queue": 0, "work": 1, "review": 2, "done": 3, "cancelled": 3, "blocked": 0}
     rows = conn.execute("""
-        SELECT wi.* FROM dependencies d
+        SELECT wi.*, d.unblock_at FROM dependencies d
         JOIN work_items wi ON wi.id = d.from_id
-        WHERE d.to_id = ? AND wi.status NOT IN ('done', 'cancelled')
+        WHERE d.to_id = ?
     """, (item_id,)).fetchall()
-    return [_row_to_dict(r) for r in rows]
+    unsatisfied = []
+    for r in rows:
+        unblock_at = r["unblock_at"] if "unblock_at" in r.keys() else "done"
+        threshold = status_rank.get(unblock_at, 3)
+        current_rank = status_rank.get(r["status"], 0)
+        if current_rank < threshold:
+            unsatisfied.append(_row_to_dict(r))
+    return unsatisfied
 
 
 def _find_newly_unblocked(conn, completed_id: str) -> list[dict]:
@@ -392,7 +402,7 @@ def get_context(item_id: str | None = None, include_ancestors: bool = False) -> 
 def upsert_note(item_id: str, key: str, body: str, role: str = "queue") -> dict:
     conn = get_connection()
     try:
-        item = conn.execute("SELECT id FROM work_items WHERE id=?", (item_id,)).fetchone()
+        item = conn.execute("SELECT * FROM work_items WHERE id=?", (item_id,)).fetchone()
         if not item:
             raise ValueError(f"Item {item_id} not found")
         now = _now()
@@ -404,7 +414,14 @@ def upsert_note(item_id: str, key: str, body: str, role: str = "queue") -> dict:
             conn.execute("INSERT INTO notes (id,item_id,key,role,body,created_at,updated_at) VALUES (?,?,?,?,?,?,?)",
                           (_uid(), item_id, key, role, body, now, now))
         conn.commit()
-        return _row_to_dict(conn.execute("SELECT * FROM notes WHERE item_id=? AND key=?", (item_id, key)).fetchone())
+        result = _row_to_dict(conn.execute("SELECT * FROM notes WHERE item_id=? AND key=?", (item_id, key)).fetchone())
+        # Auto-reopen: if item is terminal and schema has auto-reopen lifecycle
+        item_dict = _row_to_dict(item)
+        if item_dict["status"] in TERMINAL and should_auto_reopen(item_dict):
+            conn.execute("UPDATE work_items SET status='queue', updated_at=? WHERE id=?", (now, item_id))
+            conn.commit()
+            result["auto_reopened"] = True
+        return result
     finally:
         conn.close()
 
@@ -436,9 +453,15 @@ def get_notes(item_id: str, include_body: bool = True) -> list[dict]:
 
 # --- Dependencies ---
 
-def add_dependency(from_id: str, to_id: str, dep_type: str = "blocks") -> dict:
+def add_dependency(from_id: str, to_id: str, dep_type: str = "blocks",
+                   unblock_at: str = "done") -> dict:
+    """Add dependency. unblock_at: status at which the blocker unblocks (default: done).
+    Valid: done, review, work (unblocks when blocker reaches that status or beyond)."""
     if from_id == to_id:
         raise ValueError("Cannot depend on self")
+    valid_unblock = {"done", "review", "work"}
+    if unblock_at not in valid_unblock:
+        raise ValueError(f"Invalid unblock_at: {unblock_at}. Valid: {sorted(valid_unblock)}")
     conn = get_connection()
     try:
         for fid in (from_id, to_id):
@@ -449,8 +472,8 @@ def add_dependency(from_id: str, to_id: str, dep_type: str = "blocks") -> dict:
         dep_id = _uid()
         now = _now()
         try:
-            conn.execute("INSERT INTO dependencies (id,from_id,to_id,dep_type,created_at) VALUES (?,?,?,?,?)",
-                          (dep_id, from_id, to_id, dep_type, now))
+            conn.execute("INSERT INTO dependencies (id,from_id,to_id,dep_type,unblock_at,created_at) VALUES (?,?,?,?,?,?)",
+                          (dep_id, from_id, to_id, dep_type, unblock_at, now))
             conn.commit()
         except sqlite3.IntegrityError:
             raise ValueError(f"Dependency {from_id} → {to_id} already exists")

@@ -184,18 +184,20 @@ def query_notes(item_id: str, key: str = "", include_body: bool = True) -> str:
 @mcp.tool()
 def manage_dependencies(operation: str, from_id: str = "", to_id: str = "",
                         item_id: str = "", direction: str = "both",
-                        item_ids: str = "", pattern: str = "linear") -> str:
+                        item_ids: str = "", pattern: str = "linear",
+                        unblock_at: str = "done") -> str:
     """Manage dependency edges between work items.
 
     Operations: add (from_id blocks to_id), remove, query (get deps for item_id), pattern.
     Direction for query: inbound, outbound, both.
     Pattern operation: create deps using shortcuts — linear, fan-out, fan-in.
       item_ids: comma-separated list of item IDs for pattern creation.
-    Dependencies enforce ordering — blocked items cannot advance until blockers are done.
+    unblock_at: status threshold at which blocker unblocks (done, review, work). Default: done.
+    Dependencies enforce ordering — blocked items cannot advance until blockers reach unblock_at.
     """
     try:
         if operation == "add":
-            return _json(engine.add_dependency(from_id, to_id))
+            return _json(engine.add_dependency(from_id, to_id, unblock_at=unblock_at))
         elif operation == "remove":
             return _json({"removed": engine.remove_dependency(from_id, to_id)})
         elif operation == "query":

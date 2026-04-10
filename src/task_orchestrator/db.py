@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS dependencies (
     from_id TEXT NOT NULL REFERENCES work_items(id) ON DELETE CASCADE,
     to_id TEXT NOT NULL REFERENCES work_items(id) ON DELETE CASCADE,
     dep_type TEXT NOT NULL DEFAULT 'blocks',
+    unblock_at TEXT NOT NULL DEFAULT 'done',
     created_at TEXT NOT NULL,
     UNIQUE(from_id, to_id)
 );
@@ -54,6 +55,8 @@ CREATE INDEX IF NOT EXISTS idx_deps_to ON dependencies(to_id);
 MIGRATIONS = [
     ("previous_status",
      "ALTER TABLE work_items ADD COLUMN previous_status TEXT DEFAULT NULL"),
+    ("unblock_at",
+     "ALTER TABLE dependencies ADD COLUMN unblock_at TEXT NOT NULL DEFAULT 'done'"),
 ]
 
 
