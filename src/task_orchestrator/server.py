@@ -24,28 +24,45 @@ def _err(e: Exception) -> str:
 
 @mcp.tool()
 def manage_items(operation: str, title: str = "", item_id: str = "", description: str = "",
-                 parent_id: str = "", priority: str = "medium", item_type: str = "", tags: str = "") -> str:
-    """Create, update, or delete work items.
+                 summary: str = "", parent_id: str = "", priority: str = "medium",
+                 complexity: int | None = None, item_type: str = "", tags: str = "",
+                 metadata: str = "", properties: str = "",
+                 items_json: str = "", ids_json: str = "", recursive: bool = False) -> str:
+    """Create, update, or delete work items. Supports batch operations.
 
     Operations: create, update, delete.
-    Priority: critical, high, medium, low.
+    Priority: critical, high, medium, low. Complexity: 1-10.
     Items support hierarchy via parent_id (max 4 levels deep).
+    Batch create: pass items_json as JSON array of item objects.
+    Batch delete: pass ids_json as JSON array of item IDs. Use recursive=true to delete descendants.
     """
     try:
         if operation == "create":
-            return _json(engine.create_item(title=title, description=description,
-                                            parent_id=parent_id or None, priority=priority,
-                                            item_type=item_type, tags=tags))
+            if items_json:
+                items = json.loads(items_json)
+                return _json(engine.create_items_batch(items, parent_id=parent_id or None))
+            return _json(engine.create_item(
+                title=title, description=description, summary=summary,
+                parent_id=parent_id or None, priority=priority,
+                complexity=complexity, item_type=item_type, tags=tags,
+                metadata=metadata or None, properties=properties or None))
         elif operation == "update":
             kwargs = {}
             if title: kwargs["title"] = title
             if description: kwargs["description"] = description
+            if summary: kwargs["summary"] = summary
             if priority: kwargs["priority"] = priority
+            if complexity is not None: kwargs["complexity"] = complexity
             if item_type: kwargs["item_type"] = item_type
             if tags: kwargs["tags"] = tags
+            if metadata: kwargs["metadata"] = metadata
+            if properties: kwargs["properties"] = properties
             return _json(engine.update_item(item_id, **kwargs))
         elif operation == "delete":
-            return _json({"deleted": engine.delete_item(item_id)})
+            if ids_json:
+                ids = json.loads(ids_json)
+                return _json(engine.delete_items_batch(ids, recursive=recursive))
+            return _json(engine.delete_item(item_id, recursive=recursive))
         return _json({"error": f"Invalid operation: {operation}. Use: create, update, delete"})
     except Exception as e:
         return _err(e)
@@ -82,15 +99,19 @@ def query_items(operation: str = "list", item_id: str = "", status: str = "",
 
 
 @mcp.tool()
-def advance_item(item_id: str, trigger: str) -> str:
-    """Advance a work item through its workflow using a trigger.
+def advance_item(item_id: str = "", trigger: str = "", transitions_json: str = "") -> str:
+    """Advance work items through workflow using triggers. Supports batch transitions.
 
-    Triggers: start (next phase), complete (jump to done), block (pause), resume (unblock),
+    Triggers: start (next phase), complete (jump to done), block/hold (pause), resume (unblock),
     cancel (close), reopen (done/cancelled → queue).
-    Flow: queue → work → review → done. Checks dependency satisfaction before advancing.
-    Returns the updated item plus any newly unblocked items.
+    Flow: queue → work → review → done. Checks dependency satisfaction and note gates.
+    Batch: pass transitions_json as JSON array of {item_id, trigger} objects.
+    Reopen cascades parent from terminal to work.
     """
     try:
+        if transitions_json:
+            transitions = json.loads(transitions_json)
+            return _json(engine.advance_items_batch(transitions))
         return _json(engine.advance_item(item_id, trigger))
     except Exception as e:
         return _err(e)
@@ -228,11 +249,13 @@ def query_dependencies(item_id: str, direction: str = "outbound",
 
 @mcp.tool()
 def create_work_tree(root_title: str, root_description: str = "", root_priority: str = "medium",
-                     children_json: str = "[]", deps_json: str = "[]") -> str:
+                     children_json: str = "[]", deps_json: str = "[]",
+                     create_notes: bool = False) -> str:
     """Atomically create a root item + children + dependencies in one call.
 
     children_json: JSON array of {ref, title, description, priority} objects.
-    deps_json: JSON array of {from, to} objects using ref names.
+    deps_json: JSON array of {from, to, type?, unblock_at?} objects using ref names.
+    create_notes: auto-create blank notes from matching schemas (default: false).
     Example: children=[{"ref":"a","title":"Schema"},{"ref":"b","title":"API"}], deps=[{"from":"a","to":"b"}]
     """
     try:
@@ -240,7 +263,7 @@ def create_work_tree(root_title: str, root_description: str = "", root_priority:
         deps = json.loads(deps_json) if isinstance(deps_json, str) else deps_json
         return _json(engine.create_work_tree(
             root={"title": root_title, "description": root_description, "priority": root_priority},
-            children=children, deps=deps,
+            children=children, deps=deps, create_notes=create_notes,
         ))
     except Exception as e:
         return _err(e)

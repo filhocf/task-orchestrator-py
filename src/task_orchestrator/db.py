@@ -15,11 +15,17 @@ CREATE TABLE IF NOT EXISTS work_items (
     parent_id TEXT REFERENCES work_items(id) ON DELETE CASCADE,
     title TEXT NOT NULL,
     description TEXT DEFAULT '',
+    summary TEXT DEFAULT '',
     status TEXT NOT NULL DEFAULT 'queue',
+    status_label TEXT DEFAULT NULL,
     previous_status TEXT DEFAULT NULL,
     priority TEXT NOT NULL DEFAULT 'medium',
+    complexity INTEGER DEFAULT NULL,
     item_type TEXT DEFAULT '',
     tags TEXT DEFAULT '',
+    metadata TEXT DEFAULT NULL,
+    properties TEXT DEFAULT NULL,
+    role_changed_at TEXT DEFAULT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -57,6 +63,18 @@ MIGRATIONS = [
      "ALTER TABLE work_items ADD COLUMN previous_status TEXT DEFAULT NULL"),
     ("unblock_at",
      "ALTER TABLE dependencies ADD COLUMN unblock_at TEXT NOT NULL DEFAULT 'done'"),
+    ("summary",
+     "ALTER TABLE work_items ADD COLUMN summary TEXT DEFAULT ''"),
+    ("status_label",
+     "ALTER TABLE work_items ADD COLUMN status_label TEXT DEFAULT NULL"),
+    ("complexity",
+     "ALTER TABLE work_items ADD COLUMN complexity INTEGER DEFAULT NULL"),
+    ("metadata",
+     "ALTER TABLE work_items ADD COLUMN metadata TEXT DEFAULT NULL"),
+    ("properties",
+     "ALTER TABLE work_items ADD COLUMN properties TEXT DEFAULT NULL"),
+    ("role_changed_at",
+     "ALTER TABLE work_items ADD COLUMN role_changed_at TEXT DEFAULT NULL"),
 ]
 
 
