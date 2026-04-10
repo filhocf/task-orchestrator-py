@@ -1,15 +1,26 @@
 [project]
 name = "task-orchestrator-py"
-version = "0.1.0"
+version = "0.2.0"
 description = "Python port of jpicklyk/task-orchestrator — MCP server for AI agent work management"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.11"
 authors = [{name = "Claudio Ferreira Filho"}]
 keywords = ["mcp", "task-management", "ai-agents", "workflow"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Libraries",
+]
 dependencies = [
     "mcp>=1.0.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/filhocf/task-orchestrator-py"
+Repository = "https://github.com/filhocf/task-orchestrator-py"
 
 [project.scripts]
 task-orchestrator-py = "task_orchestrator.server:main"

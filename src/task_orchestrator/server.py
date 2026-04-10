@@ -12,6 +12,14 @@ Start sessions with get_context() to see current state. Use get_next_item() for 
 )
 
 
+def _json(obj) -> str:
+    return json.dumps(obj, default=str)
+
+
+def _err(e: Exception) -> str:
+    return _json({"error": str(e)})
+
+
 @mcp.tool()
 def manage_items(operation: str, title: str = "", item_id: str = "", description: str = "",
                  parent_id: str = "", priority: str = "medium", item_type: str = "", tags: str = "") -> str:
@@ -23,9 +31,9 @@ def manage_items(operation: str, title: str = "", item_id: str = "", description
     """
     try:
         if operation == "create":
-            result = engine.create_item(title=title, description=description,
-                                        parent_id=parent_id or None, priority=priority,
-                                        item_type=item_type, tags=tags)
+            return _json(engine.create_item(title=title, description=description,
+                                            parent_id=parent_id or None, priority=priority,
+                                            item_type=item_type, tags=tags))
         elif operation == "update":
             kwargs = {}
             if title: kwargs["title"] = title
@@ -33,42 +41,42 @@ def manage_items(operation: str, title: str = "", item_id: str = "", description
             if priority: kwargs["priority"] = priority
             if item_type: kwargs["item_type"] = item_type
             if tags: kwargs["tags"] = tags
-            result = engine.update_item(item_id, **kwargs)
+            return _json(engine.update_item(item_id, **kwargs))
         elif operation == "delete":
-            result = {"deleted": engine.delete_item(item_id)}
-        else:
-            return json.dumps({"error": f"Invalid operation: {operation}. Use: create, update, delete"})
-        return json.dumps(result, default=str)
+            return _json({"deleted": engine.delete_item(item_id)})
+        return _json({"error": f"Invalid operation: {operation}. Use: create, update, delete"})
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        return _err(e)
 
 
 @mcp.tool()
 def query_items(operation: str = "list", item_id: str = "", status: str = "",
                 parent_id: str = "", priority: str = "", search: str = "",
-                limit: int = 50, offset: int = 0) -> str:
+                include_ancestors: bool = False, limit: int = 50, offset: int = 0) -> str:
     """Query work items. Operations: get (by id), list (with filters), children (of parent), overview (status counts).
 
     Filters: status (queue/work/review/done/blocked/cancelled), priority, parent_id, search text.
+    Use include_ancestors=true with get to see the full parent chain.
     """
     try:
         if operation == "get":
             result = engine.get_item(item_id)
             if not result:
-                return json.dumps({"error": f"Item {item_id} not found"})
+                return _json({"error": f"Item {item_id} not found"})
+            if include_ancestors:
+                result["ancestors"] = engine.get_ancestors(item_id)
+            return _json(result)
         elif operation == "children":
-            result = engine.get_children(parent_id or item_id)
+            return _json(engine.get_children(parent_id or item_id))
         elif operation == "overview":
             ctx = engine.get_context()
-            result = {"counts": ctx["counts"], "active_count": len(ctx["active"]),
-                      "blocked_count": len(ctx["blocked"])}
-        else:
-            result = engine.query_items(status=status or None, parent_id=parent_id or None,
+            return _json({"counts": ctx["counts"], "active_count": len(ctx["active"]),
+                          "blocked_count": len(ctx["blocked"])})
+        return _json(engine.query_items(status=status or None, parent_id=parent_id or None,
                                         priority=priority or None, search=search or None,
-                                        limit=limit, offset=offset)
-        return json.dumps(result, default=str)
+                                        limit=limit, offset=offset))
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        return _err(e)
 
 
 @mcp.tool()
@@ -81,9 +89,19 @@ def advance_item(item_id: str, trigger: str) -> str:
     Returns the updated item plus any newly unblocked items.
     """
     try:
-        return json.dumps(engine.advance_item(item_id, trigger), default=str)
+        return _json(engine.advance_item(item_id, trigger))
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        return _err(e)
+
+
+@mcp.tool()
+def get_next_status(item_id: str, trigger: str) -> str:
+    """Read-only preview of what would happen with a given trigger.
+
+    Returns can_advance (bool), current status, next status, and any blockers.
+    Use before advance_item to check feasibility without side effects.
+    """
+    return _json(engine.get_next_status(item_id, trigger))
 
 
 @mcp.tool()
@@ -94,21 +112,22 @@ def get_next_item() -> str:
     Priority: items already in 'work' first, then by priority (critical > high > medium > low).
     """
     result = engine.get_next_item()
-    return json.dumps(result, default=str) if result else json.dumps({"message": "No actionable items"})
+    return _json(result) if result else _json({"message": "No actionable items"})
 
 
 @mcp.tool()
-def get_context(item_id: str = "") -> str:
+def get_context(item_id: str = "", include_ancestors: bool = False) -> str:
     """Get context snapshot for session resume or item inspection.
 
     Without item_id: global dashboard — status counts, active items, blocked items, next action.
     With item_id: item detail — children, notes, blockers, can_advance flag.
+    Use include_ancestors=true to get the full parent chain.
     Call this at session start to understand current work state.
     """
     try:
-        return json.dumps(engine.get_context(item_id or None), default=str)
+        return _json(engine.get_context(item_id or None, include_ancestors=include_ancestors))
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        return _err(e)
 
 
 @mcp.tool()
@@ -117,7 +136,7 @@ def get_blocked_items() -> str:
 
     Use to identify what's stuck and what needs to be resolved to unblock progress.
     """
-    return json.dumps(engine.get_blocked_items(), default=str)
+    return _json(engine.get_blocked_items())
 
 
 @mcp.tool()
@@ -130,39 +149,77 @@ def manage_notes(operation: str, item_id: str, key: str = "", body: str = "", ro
     """
     try:
         if operation == "upsert":
-            result = engine.upsert_note(item_id, key, body, role)
+            return _json(engine.upsert_note(item_id, key, body, role))
         elif operation == "delete":
-            result = {"deleted": engine.delete_note(item_id, key)}
+            return _json({"deleted": engine.delete_note(item_id, key)})
         elif operation == "list":
-            result = engine.get_notes(item_id)
-        else:
-            return json.dumps({"error": f"Invalid operation: {operation}. Use: upsert, delete, list"})
-        return json.dumps(result, default=str)
+            return _json(engine.get_notes(item_id))
+        return _json({"error": f"Invalid operation: {operation}. Use: upsert, delete, list"})
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        return _err(e)
+
+
+@mcp.tool()
+def query_notes(item_id: str, key: str = "", include_body: bool = True) -> str:
+    """Query notes for a work item. Use include_body=false for token-efficient metadata checks.
+
+    With key: get a single note. Without key: list all notes for the item.
+    """
+    try:
+        if key:
+            from .db import get_connection
+            conn = get_connection()
+            try:
+                row = conn.execute("SELECT * FROM notes WHERE item_id=? AND key=?", (item_id, key)).fetchone()
+                return _json(dict(row) if row else {"error": f"Note '{key}' not found on item {item_id}"})
+            finally:
+                conn.close()
+        return _json(engine.get_notes(item_id, include_body=include_body))
+    except Exception as e:
+        return _err(e)
 
 
 @mcp.tool()
 def manage_dependencies(operation: str, from_id: str = "", to_id: str = "",
-                        item_id: str = "", direction: str = "both") -> str:
+                        item_id: str = "", direction: str = "both",
+                        item_ids: str = "", pattern: str = "linear") -> str:
     """Manage dependency edges between work items.
 
-    Operations: add (from_id blocks to_id), remove, query (get deps for item_id).
+    Operations: add (from_id blocks to_id), remove, query (get deps for item_id), pattern.
     Direction for query: inbound, outbound, both.
+    Pattern operation: create deps using shortcuts — linear, fan-out, fan-in.
+      item_ids: comma-separated list of item IDs for pattern creation.
     Dependencies enforce ordering — blocked items cannot advance until blockers are done.
     """
     try:
         if operation == "add":
-            result = engine.add_dependency(from_id, to_id)
+            return _json(engine.add_dependency(from_id, to_id))
         elif operation == "remove":
-            result = {"removed": engine.remove_dependency(from_id, to_id)}
+            return _json({"removed": engine.remove_dependency(from_id, to_id)})
         elif operation == "query":
-            result = engine.get_dependencies(item_id or from_id, direction)
-        else:
-            return json.dumps({"error": f"Invalid operation: {operation}. Use: add, remove, query"})
-        return json.dumps(result, default=str)
+            return _json(engine.get_dependencies(item_id or from_id, direction))
+        elif operation == "pattern":
+            ids = [i.strip() for i in item_ids.split(",") if i.strip()]
+            return _json(engine.add_dependency_pattern(ids, pattern))
+        return _json({"error": f"Invalid operation: {operation}. Use: add, remove, query, pattern"})
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        return _err(e)
+
+
+@mcp.tool()
+def query_dependencies(item_id: str, direction: str = "outbound",
+                       neighbors_only: bool = True, max_depth: int = 10) -> str:
+    """Query dependencies with optional BFS traversal.
+
+    neighbors_only=true: direct edges only (fast). false: full BFS graph traversal.
+    Direction: outbound (what this blocks), inbound (what blocks this).
+    """
+    try:
+        if neighbors_only:
+            return _json(engine.get_dependencies(item_id, direction))
+        return _json(engine.query_dependencies_bfs(item_id, direction, max_depth))
+    except Exception as e:
+        return _err(e)
 
 
 @mcp.tool()
@@ -177,13 +234,24 @@ def create_work_tree(root_title: str, root_description: str = "", root_priority:
     try:
         children = json.loads(children_json) if isinstance(children_json, str) else children_json
         deps = json.loads(deps_json) if isinstance(deps_json, str) else deps_json
-        result = engine.create_work_tree(
+        return _json(engine.create_work_tree(
             root={"title": root_title, "description": root_description, "priority": root_priority},
             children=children, deps=deps,
-        )
-        return json.dumps(result, default=str)
+        ))
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        return _err(e)
+
+
+@mcp.tool()
+def complete_tree(parent_id: str) -> str:
+    """Batch-complete all descendants of a parent item in topological order.
+
+    Skips items already in terminal status. Reports items that couldn't be completed (e.g., blocked by deps).
+    """
+    try:
+        return _json(engine.complete_tree(parent_id))
+    except Exception as e:
+        return _err(e)
 
 
 def main():

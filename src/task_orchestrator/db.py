@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS work_items (
     title TEXT NOT NULL,
     description TEXT DEFAULT '',
     status TEXT NOT NULL DEFAULT 'queue',
+    previous_status TEXT DEFAULT NULL,
     priority TEXT NOT NULL DEFAULT 'medium',
     item_type TEXT DEFAULT '',
     tags TEXT DEFAULT '',
@@ -50,6 +51,11 @@ CREATE INDEX IF NOT EXISTS idx_deps_from ON dependencies(from_id);
 CREATE INDEX IF NOT EXISTS idx_deps_to ON dependencies(to_id);
 """
 
+MIGRATIONS = [
+    ("previous_status",
+     "ALTER TABLE work_items ADD COLUMN previous_status TEXT DEFAULT NULL"),
+]
+
 
 def get_connection() -> sqlite3.Connection:
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
@@ -63,4 +69,15 @@ def get_connection() -> sqlite3.Connection:
 def init_db():
     conn = get_connection()
     conn.executescript(SCHEMA)
+    _run_migrations(conn)
     conn.close()
+
+
+def _run_migrations(conn: sqlite3.Connection):
+    """Apply additive migrations safely."""
+    for name, sql in MIGRATIONS:
+        try:
+            conn.execute(sql)
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # column already exists
