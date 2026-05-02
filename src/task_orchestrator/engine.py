@@ -258,12 +258,16 @@ def query_items(status: str | None = None, parent_id: str | None = None,
                 "SELECT DISTINCT item_id FROM notes WHERE body LIKE ?",
                 (f"%{search}%",),
             ).fetchall()
-            matched_ids = fts_ids | {r["item_id"] for r in note_rows}
+            matched_ids = list(fts_ids | {r["item_id"] for r in note_rows})
             if not matched_ids:
                 return []
-            placeholders = ",".join("?" for _ in matched_ids)
-            clauses.append(f"id IN ({placeholders})")
-            params.extend(matched_ids)
+            # Batch IN clause in chunks of 500 to avoid SQLITE_LIMIT_VARIABLE_NUMBER
+            id_clauses = []
+            for i in range(0, len(matched_ids), 500):
+                chunk = matched_ids[i:i + 500]
+                id_clauses.append(f"id IN ({','.join('?' for _ in chunk)})")
+                params.extend(chunk)
+            clauses.append(f"({' OR '.join(id_clauses)})")
         if tags:
             tag_list = [t.strip() for t in tags.split(",") if t.strip()]
             tag_clauses = ["tags LIKE ?" for _ in tag_list]
@@ -959,15 +963,20 @@ def _insert_rows(conn, table: str, rows: list[dict]):
     if not rows:
         return
     columns = _get_table_columns(conn, table)
-    for row in rows:
-        cols = [c for c in columns if c in row]
-        placeholders = ",".join("?" for _ in cols)
-        col_names = ",".join(cols)
-        vals = tuple(row[c] for c in cols)
-        try:
-            conn.execute(f"INSERT OR IGNORE INTO {table} ({col_names}) VALUES ({placeholders})", vals)
-        except sqlite3.IntegrityError:
-            pass
+    cols = [c for c in columns if c in rows[0]]
+    placeholders = ",".join("?" for _ in cols)
+    col_names = ",".join(cols)
+    values = [tuple(row.get(c) for c in cols) for row in rows]
+    conn.executemany(
+        f"INSERT OR IGNORE INTO {table} ({col_names}) VALUES ({placeholders})", values
+    )
+
+
+def _sort_items_by_depth(items: list[dict]) -> list[dict]:
+    """Sort items so parents come before children (parent_id=NULL first)."""
+    parents = [i for i in items if not i.get("parent_id")]
+    children = [i for i in items if i.get("parent_id")]
+    return parents + children
 
 
 def import_graph(data: dict, mode: str = "merge") -> dict:
@@ -985,7 +994,9 @@ def import_graph(data: dict, mode: str = "merge") -> dict:
             conn.execute("DELETE FROM notes")
             conn.execute("DELETE FROM work_items")
             conn.commit()
-        _insert_rows(conn, "work_items", data.get("items", []))
+        # Sort items: parents first, then children (topological order)
+        sorted_items = _sort_items_by_depth(data.get("items", []))
+        _insert_rows(conn, "work_items", sorted_items)
         _insert_rows(conn, "notes", data.get("notes", []))
         _insert_rows(conn, "dependencies", data.get("dependencies", []))
         conn.commit()
