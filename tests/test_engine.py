@@ -446,3 +446,48 @@ def test_fts_search_partial():
     items = engine.query_items(search="authent")
     assert len(items) == 1
     assert "authentication" in items[0]["title"]
+
+
+# --- Scheduled Items ---
+
+def test_scheduled_item_create():
+    item = _create("Daily Standup", schedule="0 9 * * *")
+    assert item["schedule"] == "0 9 * * *"
+    assert item["next_run_at"] is not None
+
+
+def test_scheduled_item_requeues():
+    item = _create("Recurring", schedule="0 9 * * *")
+    r = engine.advance_item(item["id"], "complete")
+    assert r["status"] == "queue"
+    assert r["next_run_at"] is not None
+    assert r["previous_status"] is None
+
+
+def test_non_scheduled_stays_done():
+    item = _create("One-off")
+    r = engine.advance_item(item["id"], "complete")
+    assert r["status"] == "done"
+
+
+def test_scheduled_upcoming():
+    item = _create("Soon", schedule="* * * * *")
+    ctx = engine.get_context()
+    upcoming_ids = [i["id"] for i in ctx["scheduled_upcoming"]]
+    assert item["id"] in upcoming_ids
+
+
+def test_scheduled_item_waits_for_next_run():
+    """Completed scheduled item should NOT be returned by get_next_item immediately."""
+    item = _create("Recurring", schedule="0 9 * * *")
+    r = engine.advance_item(item["id"], "complete")
+    assert r["status"] == "queue"
+    assert r["next_run_at"] is not None
+    nxt = engine.get_next_item()
+    assert nxt is None or nxt["id"] != item["id"]
+
+
+def test_invalid_cron_expression():
+    """Invalid cron expression should raise VALIDATION error."""
+    with pytest.raises(ToolError, match="Invalid cron expression"):
+        _create("Bad Cron", schedule="not a cron")

@@ -13,6 +13,8 @@ from typing import Any
 from .db import get_connection, fts_available
 from .schemas import check_gate, should_skip_review, can_cancel, get_schema_for_item, should_auto_reopen
 
+from croniter import croniter, CroniterBadCronError
+
 VALID_STATUSES = {"queue", "work", "review", "done", "blocked", "cancelled"}
 
 
@@ -92,7 +94,7 @@ def create_item(title: str, description: str = "", summary: str = "",
                 parent_id: str | None = None, priority: str = "medium",
                 complexity: int | None = None, item_type: str = "", tags: str = "",
                 metadata: str | None = None, properties: str | None = None,
-                due_at: str | None = None) -> dict:
+                due_at: str | None = None, schedule: str | None = None) -> dict:
     _validate_priority(priority)
     _validate_due_at(due_at)
     if complexity is not None and not (1 <= complexity <= 10):
@@ -108,12 +110,18 @@ def create_item(title: str, description: str = "", summary: str = "",
             depth = _get_depth(conn, parent_id)
             if depth >= 3:
                 raise ToolError("VALIDATION", f"Max depth 4 reached (parent at depth {depth})", "parent_id")
+        next_run_at = None
+        if schedule:
+            try:
+                next_run_at = croniter(schedule, datetime.now(timezone.utc)).get_next(datetime).isoformat()
+            except CroniterBadCronError:
+                raise ToolError("VALIDATION", f"Invalid cron expression: {schedule}", "schedule")
         conn.execute(
             """INSERT INTO work_items (id,parent_id,title,description,summary,status,priority,
-               complexity,item_type,tags,metadata,properties,role_changed_at,due_at,created_at,updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               complexity,item_type,tags,metadata,properties,role_changed_at,due_at,schedule,next_run_at,created_at,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (item_id, parent_id, title, description, summary, "queue", priority,
-             complexity, item_type, tags, metadata, properties, now, due_at, now, now),
+             complexity, item_type, tags, metadata, properties, now, due_at, schedule, next_run_at, now, now),
         )
         conn.commit()
         return _row_to_dict(conn.execute("SELECT * FROM work_items WHERE id=?", (item_id,)).fetchone())
@@ -146,10 +154,15 @@ def update_item(item_id: str, **fields) -> dict:
     conn = get_connection()
     try:
         allowed = {"title", "description", "summary", "priority", "complexity",
-                   "item_type", "tags", "metadata", "properties", "due_at"}
+                   "item_type", "tags", "metadata", "properties", "due_at", "schedule"}
         updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
         if not updates:
             raise ToolError("VALIDATION", "No valid fields to update")
+        if "schedule" in updates:
+            try:
+                updates["next_run_at"] = croniter(updates["schedule"], datetime.now(timezone.utc)).get_next(datetime).isoformat()
+            except CroniterBadCronError:
+                raise ToolError("VALIDATION", f"Invalid cron expression: {updates['schedule']}", "schedule")
         updates["updated_at"] = _now()
         set_clause = ", ".join(f"{k}=?" for k in updates)
         conn.execute(f"UPDATE work_items SET {set_clause} WHERE id=?", (*updates.values(), item_id))
@@ -400,6 +413,15 @@ def advance_item(item_id: str, trigger: str) -> dict:
             "UPDATE work_items SET status=?, status_label=?, role_changed_at=?, updated_at=? WHERE id=?",
             (new_status, status_label, now, now, item_id))
         conn.commit()
+
+        # Scheduled item requeue: if completing and item has a schedule, requeue it
+        if new_status == "done" and row["schedule"]:
+            new_next_run = croniter(row["schedule"], datetime.now(timezone.utc)).get_next(datetime).isoformat()
+            conn.execute(
+                "UPDATE work_items SET status='queue', previous_status=NULL, next_run_at=?, updated_at=? WHERE id=?",
+                (new_next_run, now, item_id))
+            conn.commit()
+
         result = _row_to_dict(conn.execute("SELECT * FROM work_items WHERE id=?", (item_id,)).fetchone())
 
         # Find items unblocked by this transition
@@ -537,6 +559,16 @@ def _get_items_by_due_date(conn, mode: str, now_dt: datetime) -> list[dict]:
     return [_row_to_dict(r) for r in rows]
 
 
+def _get_scheduled_upcoming(conn, now_dt: datetime) -> list[dict]:
+    """Items with next_run_at within next 24h."""
+    cutoff = (now_dt + timedelta(hours=24)).isoformat()
+    rows = conn.execute(
+        "SELECT * FROM work_items WHERE next_run_at IS NOT NULL AND next_run_at <= ?",
+        (cutoff,),
+    ).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
 def get_next_item() -> dict | None:
     conn = get_connection()
     try:
@@ -548,7 +580,11 @@ def get_next_item() -> dict | None:
         for r in rows:
             blockers = _get_unsatisfied_blockers(conn, r["id"])
             if not blockers:
-                candidates.append(_row_to_dict(r))
+                item = _row_to_dict(r)
+                # Skip scheduled items whose next_run_at is in the future
+                if item.get("next_run_at") and item["next_run_at"] > now_iso:
+                    continue
+                candidates.append(item)
 
         def _sort_key(x):
             overdue = 1
@@ -634,7 +670,8 @@ def get_context(item_id: str | None = None, include_ancestors: bool = False) -> 
                 "recent_completed": recent, "next_item": next_item,
                 "stale_items": stale_items,
                 "due_soon": _get_items_by_due_date(conn, "due_soon", now_dt),
-                "overdue": _get_items_by_due_date(conn, "overdue", now_dt)}
+                "overdue": _get_items_by_due_date(conn, "overdue", now_dt),
+                "scheduled_upcoming": _get_scheduled_upcoming(conn, now_dt)}
     finally:
         conn.close()
 
