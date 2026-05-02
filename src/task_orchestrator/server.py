@@ -39,6 +39,7 @@ def manage_items(operation: str, title: str = "", item_id: str = "", description
                  summary: str = "", parent_id: str = "", priority: str = "medium",
                  complexity: int | None = None, item_type: str = "", tags: str = "",
                  metadata: str = "", properties: str = "",
+                 due_at: str = "",
                  items_json: str = "", ids_json: str = "", recursive: bool = False) -> str:
     """Create, update, or delete work items. Supports batch operations.
 
@@ -59,7 +60,8 @@ def manage_items(operation: str, title: str = "", item_id: str = "", description
                 title=title, description=description, summary=summary,
                 parent_id=parent_id or None, priority=priority,
                 complexity=complexity, item_type=item_type, tags=tags,
-                metadata=metadata or None, properties=properties or None))
+                metadata=metadata or None, properties=properties or None,
+                due_at=due_at or None))
         elif operation == "update":
             kwargs = {}
             if title: kwargs["title"] = title
@@ -71,6 +73,7 @@ def manage_items(operation: str, title: str = "", item_id: str = "", description
             if tags: kwargs["tags"] = tags
             if metadata: kwargs["metadata"] = metadata
             if properties: kwargs["properties"] = properties
+            if due_at: kwargs["due_at"] = due_at
             return _json(engine.update_item(item_id, **kwargs))
         elif operation == "delete":
             if ids_json:

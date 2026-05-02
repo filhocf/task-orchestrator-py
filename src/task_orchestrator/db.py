@@ -75,6 +75,8 @@ MIGRATIONS = [
      "ALTER TABLE work_items ADD COLUMN properties TEXT DEFAULT NULL"),
     ("role_changed_at",
      "ALTER TABLE work_items ADD COLUMN role_changed_at TEXT DEFAULT NULL"),
+    ("due_at",
+     "ALTER TABLE work_items ADD COLUMN due_at TEXT DEFAULT NULL"),
 ]
 
 
