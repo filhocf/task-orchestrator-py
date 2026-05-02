@@ -421,6 +421,7 @@ def test_get_next_item_overdue_priority():
     assert nxt["id"] == overdue["id"]
 
 
+
 # --- FTS Search ---
 
 def test_fts_search_description():
