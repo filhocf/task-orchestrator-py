@@ -542,8 +542,21 @@ def get_context(item_id: str | None = None, include_ancestors: bool = False) -> 
             "SELECT * FROM work_items WHERE status IN ('done','cancelled') ORDER BY updated_at DESC LIMIT 5").fetchall()]
         blocked = get_blocked_items()
         next_item = get_next_item()
+        # Stale item detection
+        now_dt = datetime.now(timezone.utc)
+        stale_items = []
+        for row in conn.execute(
+            "SELECT * FROM work_items WHERE status IN ('queue','work')"
+        ).fetchall():
+            item = _row_to_dict(row)
+            updated = datetime.fromisoformat(item["updated_at"])
+            days = (now_dt - updated).days
+            if (item["status"] == "queue" and days > 7) or (item["status"] == "work" and days > 3):
+                item["stale_days"] = days
+                stale_items.append(item)
         return {"counts": counts, "active": active, "blocked": blocked,
-                "recent_completed": recent, "next_item": next_item}
+                "recent_completed": recent, "next_item": next_item,
+                "stale_items": stale_items}
     finally:
         conn.close()
 
