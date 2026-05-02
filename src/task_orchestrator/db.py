@@ -1,8 +1,14 @@
 """SQLite database layer for persistent work item storage."""
 
+import logging
 import sqlite3
 import os
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+# Module-level flag: True if FTS5 is available and initialized
+fts_available = False
 
 DB_PATH = os.environ.get(
     "TASK_ORCHESTRATOR_DB",
@@ -26,6 +32,7 @@ CREATE TABLE IF NOT EXISTS work_items (
     metadata TEXT DEFAULT NULL,
     properties TEXT DEFAULT NULL,
     role_changed_at TEXT DEFAULT NULL,
+    due_at TEXT DEFAULT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -56,6 +63,7 @@ CREATE INDEX IF NOT EXISTS idx_items_status ON work_items(status);
 CREATE INDEX IF NOT EXISTS idx_notes_item ON notes(item_id);
 CREATE INDEX IF NOT EXISTS idx_deps_from ON dependencies(from_id);
 CREATE INDEX IF NOT EXISTS idx_deps_to ON dependencies(to_id);
+CREATE INDEX IF NOT EXISTS idx_due_at ON work_items(due_at) WHERE due_at IS NOT NULL;
 """
 
 MIGRATIONS = [
@@ -93,7 +101,50 @@ def init_db():
     conn = get_connection()
     conn.executescript(SCHEMA)
     _run_migrations(conn)
+    _init_fts(conn)
     conn.close()
+
+
+def _init_fts(conn: sqlite3.Connection):
+    """Create FTS5 virtual table and sync triggers. Falls back gracefully if FTS5 unavailable."""
+    global fts_available
+    # Check if FTS table already exists to avoid unnecessary rebuild
+    exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='items_fts'"
+    ).fetchone()
+    if exists:
+        fts_available = True
+        return
+    try:
+        conn.executescript("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
+                id, title, description, content=work_items, content_rowid=rowid
+            );
+
+            CREATE TRIGGER IF NOT EXISTS items_fts_ai AFTER INSERT ON work_items BEGIN
+                INSERT INTO items_fts(rowid, id, title, description)
+                VALUES (NEW.rowid, NEW.id, NEW.title, NEW.description);
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS items_fts_ad AFTER DELETE ON work_items BEGIN
+                INSERT INTO items_fts(items_fts, rowid, id, title, description)
+                VALUES ('delete', OLD.rowid, OLD.id, OLD.title, OLD.description);
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS items_fts_au AFTER UPDATE ON work_items BEGIN
+                INSERT INTO items_fts(items_fts, rowid, id, title, description)
+                VALUES ('delete', OLD.rowid, OLD.id, OLD.title, OLD.description);
+                INSERT INTO items_fts(rowid, id, title, description)
+                VALUES (NEW.rowid, NEW.id, NEW.title, NEW.description);
+            END;
+        """)
+        # Only rebuild on first creation to sync existing data
+        conn.execute("INSERT INTO items_fts(items_fts) VALUES('rebuild')")
+        conn.commit()
+        fts_available = True
+    except Exception:
+        logger.warning("FTS5 not available — falling back to LIKE-based search")
+        fts_available = False
 
 
 def _run_migrations(conn: sqlite3.Connection):

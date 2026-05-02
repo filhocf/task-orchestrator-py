@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
-from .db import get_connection
+from .db import get_connection, fts_available
 from .schemas import check_gate, should_skip_review, can_cancel, get_schema_for_item, should_auto_reopen
 
 VALID_STATUSES = {"queue", "work", "review", "done", "blocked", "cancelled"}
@@ -78,6 +78,14 @@ def _validate_priority(priority: str):
         raise ToolError("VALIDATION", f"Invalid priority: {priority}. Valid: {sorted(PRIORITIES)}", "priority")
 
 
+def _validate_due_at(due_at: str | None):
+    if due_at is not None:
+        try:
+            datetime.fromisoformat(due_at)
+        except (ValueError, TypeError):
+            raise ToolError("VALIDATION", f"Invalid due_at: {due_at}. Must be ISO 8601 datetime string.", "due_at")
+
+
 # --- WorkItem CRUD ---
 
 def create_item(title: str, description: str = "", summary: str = "",
@@ -86,6 +94,7 @@ def create_item(title: str, description: str = "", summary: str = "",
                 metadata: str | None = None, properties: str | None = None,
                 due_at: str | None = None) -> dict:
     _validate_priority(priority)
+    _validate_due_at(due_at)
     if complexity is not None and not (1 <= complexity <= 10):
         raise ToolError("VALIDATION", f"Complexity must be 1-10, got {complexity}", "complexity")
     conn = get_connection()
@@ -129,6 +138,8 @@ def create_items_batch(items: list[dict], parent_id: str | None = None) -> dict:
 def update_item(item_id: str, **fields) -> dict:
     if "priority" in fields:
         _validate_priority(fields["priority"])
+    if "due_at" in fields:
+        _validate_due_at(fields["due_at"])
     if "complexity" in fields and fields["complexity"] is not None:
         if not (1 <= fields["complexity"] <= 10):
             raise ToolError("VALIDATION", f"Complexity must be 1-10, got {fields['complexity']}", "complexity")
@@ -228,8 +239,24 @@ def query_items(status: str | None = None, parent_id: str | None = None,
             clauses.append("priority=?")
             params.append(priority)
         if search:
-            clauses.append("(title LIKE ? OR description LIKE ?)")
-            params.extend([f"%{search}%", f"%{search}%"])
+            # FTS5 match on title/description + LIKE on notes body, deduplicated
+            fts_ids = _fts_search(conn, search)
+            # NOTE: Notes search uses LIKE — acceptable for now.
+            # FTS on notes would require a separate FTS virtual table.
+            note_rows = conn.execute(
+                "SELECT DISTINCT item_id FROM notes WHERE body LIKE ?",
+                (f"%{search}%",),
+            ).fetchall()
+            matched_ids = list(fts_ids | {r["item_id"] for r in note_rows})
+            if not matched_ids:
+                return []
+            # Batch IN clause in chunks of 500 to avoid SQLITE_LIMIT_VARIABLE_NUMBER
+            id_clauses = []
+            for i in range(0, len(matched_ids), 500):
+                chunk = matched_ids[i:i + 500]
+                id_clauses.append(f"id IN ({','.join('?' for _ in chunk)})")
+                params.extend(chunk)
+            clauses.append(f"({' OR '.join(id_clauses)})")
         if tags:
             tag_list = [t.strip() for t in tags.split(",") if t.strip()]
             tag_clauses = ["tags LIKE ?" for _ in tag_list]
@@ -243,6 +270,29 @@ def query_items(status: str | None = None, parent_id: str | None = None,
         return [_row_to_dict(r) for r in rows]
     finally:
         conn.close()
+
+
+def _fts_search(conn, search: str) -> set[str]:
+    """Search FTS5 index with MATCH, fallback to LIKE if FTS5 unavailable."""
+    if not fts_available:
+        rows = conn.execute(
+            "SELECT id FROM work_items WHERE title LIKE ? OR description LIKE ?",
+            (f"%{search}%", f"%{search}%"),
+        ).fetchall()
+        return {r["id"] for r in rows}
+    try:
+        fts_term = search.replace('"', '""')
+        rows = conn.execute(
+            'SELECT id FROM items_fts WHERE items_fts MATCH ?',
+            (f'"{fts_term}" OR {fts_term}*',),
+        ).fetchall()
+        return {r["id"] for r in rows}
+    except Exception:
+        rows = conn.execute(
+            "SELECT id FROM work_items WHERE title LIKE ? OR description LIKE ?",
+            (f"%{search}%", f"%{search}%"),
+        ).fetchall()
+        return {r["id"] for r in rows}
 
 
 def get_children(parent_id: str) -> list[dict]:
@@ -470,24 +520,20 @@ def _find_newly_unblocked(conn, completed_id: str) -> list[dict]:
     return unblocked
 
 
-def _get_due_soon(conn, now_dt: datetime) -> list[dict]:
-    """Items with due_at within next 24h that are not terminal."""
-    cutoff = (now_dt + timedelta(hours=24)).isoformat()
+def _get_items_by_due_date(conn, mode: str, now_dt: datetime) -> list[dict]:
+    """Get items by due date. mode: 'due_soon' (next 24h) or 'overdue' (past due)."""
     now_iso = now_dt.isoformat()
-    rows = conn.execute(
-        "SELECT * FROM work_items WHERE due_at IS NOT NULL AND due_at > ? AND due_at <= ? AND status NOT IN ('done','cancelled')",
-        (now_iso, cutoff),
-    ).fetchall()
-    return [_row_to_dict(r) for r in rows]
-
-
-def _get_overdue(conn, now_dt: datetime) -> list[dict]:
-    """Items with due_at in the past that are not terminal."""
-    now_iso = now_dt.isoformat()
-    rows = conn.execute(
-        "SELECT * FROM work_items WHERE due_at IS NOT NULL AND due_at <= ? AND status NOT IN ('done','cancelled')",
-        (now_iso,),
-    ).fetchall()
+    if mode == "due_soon":
+        cutoff = (now_dt + timedelta(hours=24)).isoformat()
+        rows = conn.execute(
+            "SELECT * FROM work_items WHERE due_at IS NOT NULL AND due_at > ? AND due_at <= ? AND status NOT IN ('done','cancelled')",
+            (now_iso, cutoff),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM work_items WHERE due_at IS NOT NULL AND due_at <= ? AND status NOT IN ('done','cancelled')",
+            (now_iso,),
+        ).fetchall()
     return [_row_to_dict(r) for r in rows]
 
 
@@ -587,8 +633,8 @@ def get_context(item_id: str | None = None, include_ancestors: bool = False) -> 
         return {"counts": counts, "active": active, "blocked": blocked,
                 "recent_completed": recent, "next_item": next_item,
                 "stale_items": stale_items,
-                "due_soon": _get_due_soon(conn, now_dt),
-                "overdue": _get_overdue(conn, now_dt)}
+                "due_soon": _get_items_by_due_date(conn, "due_soon", now_dt),
+                "overdue": _get_items_by_due_date(conn, "overdue", now_dt)}
     finally:
         conn.close()
 
