@@ -82,10 +82,11 @@ def manage_items(operation: str, title: str = "", item_id: str = "", description
 @mcp.tool()
 def query_items(operation: str = "list", item_id: str = "", status: str = "",
                 parent_id: str = "", priority: str = "", search: str = "",
+                tags: str = "",
                 include_ancestors: bool = False, limit: int = 50, offset: int = 0) -> str:
     """Query work items. Operations: get (by id), list (with filters), children (of parent), overview (status counts).
 
-    Filters: status (queue/work/review/done/blocked/cancelled), priority, parent_id, search text.
+    Filters: status (queue/work/review/done/blocked/cancelled), priority, parent_id, search text, tags (comma-separated).
     Use include_ancestors=true with get to see the full parent chain.
     """
     try:
@@ -106,7 +107,7 @@ def query_items(operation: str = "list", item_id: str = "", status: str = "",
                           "blocked_count": len(ctx["blocked"])})
         return _json(engine.query_items(status=status or None, parent_id=parent_id or None,
                                         priority=priority or None, search=search or None,
-                                        limit=limit, offset=offset))
+                                        tags=tags or None, limit=limit, offset=offset))
     except Exception as e:
         return _err(e)
 

@@ -195,6 +195,7 @@ def get_item(item_id: str) -> dict | None:
 
 def query_items(status: str | None = None, parent_id: str | None = None,
                 priority: str | None = None, search: str | None = None,
+                tags: str | None = None,
                 limit: int = 50, offset: int = 0) -> list[dict]:
     conn = get_connection()
     try:
@@ -211,6 +212,11 @@ def query_items(status: str | None = None, parent_id: str | None = None,
         if search:
             clauses.append("(title LIKE ? OR description LIKE ?)")
             params.extend([f"%{search}%", f"%{search}%"])
+        if tags:
+            tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+            tag_clauses = ["tags LIKE ?" for _ in tag_list]
+            clauses.append(f"({' OR '.join(tag_clauses)})")
+            params.extend([f"%{t}%" for t in tag_list])
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         rows = conn.execute(
             f"SELECT * FROM work_items {where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
