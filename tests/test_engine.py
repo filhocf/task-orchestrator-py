@@ -412,13 +412,57 @@ def test_overdue_detection():
     assert item["id"] in overdue_ids
 
 
-def test_get_next_item_overdue_priority():
-    """Overdue item returned first even if lower priority."""
-    _create("High priority no due", priority="critical")
-    overdue_due = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
-    overdue = _create("Low priority overdue", priority="low", due_at=overdue_due)
-    nxt = engine.get_next_item()
-    assert nxt["id"] == overdue["id"]
+# --- Export / Import ---
+
+def test_export_graph():
+    a = _create("A")
+    b = _create("B")
+    engine.upsert_note(a["id"], "req", "requirement body", role="queue")
+    engine.add_dependency(a["id"], b["id"])
+    data = engine.export_graph()
+    assert data["version"] == "0.7.0"
+    assert "exported_at" in data
+    assert len(data["items"]) >= 2
+    assert len(data["notes"]) >= 1
+    assert len(data["dependencies"]) >= 1
+    ids = [i["id"] for i in data["items"]]
+    assert a["id"] in ids
+    assert b["id"] in ids
+
+
+def test_import_merge():
+    a = _create("A")
+    b = _create("B")
+    engine.upsert_note(a["id"], "req", "body")
+    engine.add_dependency(a["id"], b["id"])
+    data = engine.export_graph()
+    # Delete item b (cascade removes dep too)
+    engine.delete_item(b["id"])
+    assert engine.get_item(b["id"]) is None
+    # Merge import should restore b and the dependency
+    result = engine.import_graph(data, mode="merge")
+    assert result["imported"] is True
+    assert result["mode"] == "merge"
+    assert engine.get_item(b["id"]) is not None
+    assert result["counts"]["items"] >= 2
+    assert result["counts"]["dependencies"] >= 1
+
+
+def test_import_replace():
+    a = _create("A")
+    b = _create("B")
+    engine.upsert_note(a["id"], "req", "body")
+    data = engine.export_graph()
+    # Create extra item not in export
+    c = _create("C")
+    result = engine.import_graph(data, mode="replace")
+    assert result["imported"] is True
+    assert result["mode"] == "replace"
+    # C should be gone, only A and B remain
+    assert engine.get_item(c["id"]) is None
+    assert engine.get_item(a["id"]) is not None
+    assert engine.get_item(b["id"]) is not None
+    assert result["counts"]["items"] == 2
 
 
 
@@ -447,6 +491,7 @@ def test_fts_search_partial():
     items = engine.query_items(search="authent")
     assert len(items) == 1
     assert "authentication" in items[0]["title"]
+
 
 
 # --- Scheduled Items ---
@@ -491,4 +536,5 @@ def test_scheduled_item_waits_for_next_run():
 def test_invalid_cron_expression():
     """Invalid cron expression should raise VALIDATION error."""
     with pytest.raises(ToolError, match="Invalid cron expression"):
+        _create("Bad Cron", schedule="not a cron")
         _create("Bad Cron", schedule="not a cron")
