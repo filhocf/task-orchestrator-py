@@ -361,6 +361,34 @@ def manage_schemas(operation: str = "list", schema_name: str = "", item_id: str 
         return _err(e)
 
 
+@mcp.tool()
+def export_graph() -> str:
+    """Export the entire work graph (items, notes, dependencies) as JSON.
+
+    Returns a JSON object with items, notes, dependencies, exported_at timestamp, and version.
+    Use import_graph to restore from this export.
+    """
+    try:
+        return _json(engine.export_graph())
+    except Exception as e:
+        return _err(e)
+
+
+@mcp.tool()
+def import_graph(data_json: str, mode: str = "merge") -> str:
+    """Import a work graph from JSON. Supports merge and replace modes.
+
+    data_json: JSON string from export_graph output.
+    mode: 'merge' inserts items/notes/deps that don't exist (skip on conflict).
+          'replace' deletes everything first then inserts all.
+    """
+    try:
+        data = json.loads(data_json)
+        return _json(engine.import_graph(data, mode=mode))
+    except Exception as e:
+        return _err(e)
+
+
 def main():
     db.init_db()
     register_prompts(mcp)

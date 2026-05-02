@@ -254,22 +254,16 @@ def query_items(status: str | None = None, parent_id: str | None = None,
         if search:
             # FTS5 match on title/description + LIKE on notes body, deduplicated
             fts_ids = _fts_search(conn, search)
-            # NOTE: Notes search uses LIKE — acceptable for now.
-            # FTS on notes would require a separate FTS virtual table.
             note_rows = conn.execute(
                 "SELECT DISTINCT item_id FROM notes WHERE body LIKE ?",
                 (f"%{search}%",),
             ).fetchall()
-            matched_ids = list(fts_ids | {r["item_id"] for r in note_rows})
+            matched_ids = fts_ids | {r["item_id"] for r in note_rows}
             if not matched_ids:
                 return []
-            # Batch IN clause in chunks of 500 to avoid SQLITE_LIMIT_VARIABLE_NUMBER
-            id_clauses = []
-            for i in range(0, len(matched_ids), 500):
-                chunk = matched_ids[i:i + 500]
-                id_clauses.append(f"id IN ({','.join('?' for _ in chunk)})")
-                params.extend(chunk)
-            clauses.append(f"({' OR '.join(id_clauses)})")
+            placeholders = ",".join("?" for _ in matched_ids)
+            clauses.append(f"id IN ({placeholders})")
+            params.extend(matched_ids)
         if tags:
             tag_list = [t.strip() for t in tags.split(",") if t.strip()]
             tag_clauses = ["tags LIKE ?" for _ in tag_list]
@@ -286,13 +280,7 @@ def query_items(status: str | None = None, parent_id: str | None = None,
 
 
 def _fts_search(conn, search: str) -> set[str]:
-    """Search FTS5 index with MATCH, fallback to LIKE if FTS5 unavailable."""
-    if not fts_available:
-        rows = conn.execute(
-            "SELECT id FROM work_items WHERE title LIKE ? OR description LIKE ?",
-            (f"%{search}%", f"%{search}%"),
-        ).fetchall()
-        return {r["id"] for r in rows}
+    """Search FTS5 index with MATCH, fallback to LIKE on failure."""
     try:
         fts_term = search.replace('"', '""')
         rows = conn.execute(
@@ -939,5 +927,73 @@ def complete_tree(parent_id: str) -> dict:
             except ValueError as e:
                 skipped.append({"id": item["id"], "title": item["title"], "reason": str(e)})
         return {"completed": completed, "skipped": skipped}
+    finally:
+        conn.close()
+
+
+# --- Export / Import ---
+
+def export_graph() -> dict:
+    """Export all items, notes, and dependencies as a JSON-serializable dict."""
+    conn = get_connection()
+    try:
+        items = [_row_to_dict(r) for r in conn.execute("SELECT * FROM work_items").fetchall()]
+        notes = [_row_to_dict(r) for r in conn.execute("SELECT * FROM notes").fetchall()]
+        deps = [_row_to_dict(r) for r in conn.execute("SELECT * FROM dependencies").fetchall()]
+        return {
+            "items": items,
+            "notes": notes,
+            "dependencies": deps,
+            "exported_at": _now(),
+            "version": "0.7.0",
+        }
+    finally:
+        conn.close()
+
+
+def _get_table_columns(conn, table: str) -> list[str]:
+    return [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+
+
+def _insert_rows(conn, table: str, rows: list[dict]):
+    if not rows:
+        return
+    columns = _get_table_columns(conn, table)
+    for row in rows:
+        cols = [c for c in columns if c in row]
+        placeholders = ",".join("?" for _ in cols)
+        col_names = ",".join(cols)
+        vals = tuple(row[c] for c in cols)
+        try:
+            conn.execute(f"INSERT OR IGNORE INTO {table} ({col_names}) VALUES ({placeholders})", vals)
+        except sqlite3.IntegrityError:
+            pass
+
+
+def import_graph(data: dict, mode: str = "merge") -> dict:
+    """Import items, notes, and dependencies from an exported dict.
+
+    mode='merge': insert rows that don't exist (skip on conflict).
+    mode='replace': delete everything first, then insert all.
+    """
+    if mode not in ("merge", "replace"):
+        raise ToolError("VALIDATION", f"Invalid mode: {mode}. Valid: merge, replace", "mode")
+    conn = get_connection()
+    try:
+        if mode == "replace":
+            conn.execute("DELETE FROM dependencies")
+            conn.execute("DELETE FROM notes")
+            conn.execute("DELETE FROM work_items")
+            conn.commit()
+        _insert_rows(conn, "work_items", data.get("items", []))
+        _insert_rows(conn, "notes", data.get("notes", []))
+        _insert_rows(conn, "dependencies", data.get("dependencies", []))
+        conn.commit()
+        counts = {
+            "items": conn.execute("SELECT COUNT(*) as c FROM work_items").fetchone()["c"],
+            "notes": conn.execute("SELECT COUNT(*) as c FROM notes").fetchone()["c"],
+            "dependencies": conn.execute("SELECT COUNT(*) as c FROM dependencies").fetchone()["c"],
+        }
+        return {"imported": True, "mode": mode, "counts": counts}
     finally:
         conn.close()
