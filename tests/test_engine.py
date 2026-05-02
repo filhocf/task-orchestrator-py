@@ -390,14 +390,14 @@ def test_notes_upsert_update():
 
 # --- Due Dates ---
 
-def test_due_date_create():
+def test_create_item_with_due_date():
     due = (datetime.now(timezone.utc) + timedelta(hours=5)).isoformat()
     item = _create("Due Soon", due_at=due)
     assert item["due_at"] == due
 
 
 def test_due_soon_detection():
-    due = (datetime.now(timezone.utc) + timedelta(hours=5)).isoformat()
+    due = (datetime.now(timezone.utc) + timedelta(hours=12)).isoformat()
     item = _create("Due Soon", due_at=due)
     ctx = engine.get_context()
     due_soon_ids = [i["id"] for i in ctx["due_soon"]]
@@ -410,3 +410,12 @@ def test_overdue_detection():
     ctx = engine.get_context()
     overdue_ids = [i["id"] for i in ctx["overdue"]]
     assert item["id"] in overdue_ids
+
+
+def test_get_next_item_overdue_priority():
+    """Overdue item returned first even if lower priority."""
+    _create("High priority no due", priority="critical")
+    overdue_due = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    overdue = _create("Low priority overdue", priority="low", due_at=overdue_due)
+    nxt = engine.get_next_item()
+    assert nxt["id"] == overdue["id"]
