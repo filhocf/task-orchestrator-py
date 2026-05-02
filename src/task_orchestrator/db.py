@@ -33,6 +33,8 @@ CREATE TABLE IF NOT EXISTS work_items (
     properties TEXT DEFAULT NULL,
     role_changed_at TEXT DEFAULT NULL,
     due_at TEXT DEFAULT NULL,
+    schedule TEXT DEFAULT NULL,
+    next_run_at TEXT DEFAULT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -85,6 +87,10 @@ MIGRATIONS = [
      "ALTER TABLE work_items ADD COLUMN role_changed_at TEXT DEFAULT NULL"),
     ("due_at",
      "ALTER TABLE work_items ADD COLUMN due_at TEXT DEFAULT NULL"),
+    ("schedule",
+     "ALTER TABLE work_items ADD COLUMN schedule TEXT DEFAULT NULL"),
+    ("next_run_at",
+     "ALTER TABLE work_items ADD COLUMN next_run_at TEXT DEFAULT NULL"),
 ]
 
 
