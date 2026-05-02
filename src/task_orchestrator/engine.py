@@ -14,6 +14,23 @@ from .db import get_connection
 from .schemas import check_gate, should_skip_review, can_cancel, get_schema_for_item, should_auto_reopen
 
 VALID_STATUSES = {"queue", "work", "review", "done", "blocked", "cancelled"}
+
+
+def resolve_short_id(prefix: str) -> str:
+    """Resolve a 4+ char hex prefix to a full item ID."""
+    if len(prefix) < 4:
+        raise ValueError("Short ID must be at least 4 characters")
+    conn = get_connection()
+    try:
+        rows = conn.execute("SELECT id FROM work_items WHERE id LIKE ?", (f"{prefix}%",)).fetchall()
+        if len(rows) == 0:
+            raise ValueError(f"NOT_FOUND: no item matching prefix '{prefix}'")
+        if len(rows) > 1:
+            ids = [r["id"] for r in rows]
+            raise ValueError(f"AMBIGUOUS: prefix '{prefix}' matches {len(ids)} items: {ids}")
+        return rows[0]["id"]
+    finally:
+        conn.close()
 TERMINAL = {"done", "cancelled"}
 PRIORITIES = {"critical", "high", "medium", "low"}
 PRIORITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}

@@ -22,6 +22,15 @@ def _err(e: Exception) -> str:
     return _json({"error": str(e)})
 
 
+def _resolve(id_str: str) -> str:
+    """Resolve a potentially short hex ID to full UUID."""
+    if not id_str:
+        return id_str
+    if len(id_str) < 36:
+        return engine.resolve_short_id(id_str)
+    return id_str
+
+
 @mcp.tool()
 def manage_items(operation: str, title: str = "", item_id: str = "", description: str = "",
                  summary: str = "", parent_id: str = "", priority: str = "medium",
@@ -37,6 +46,8 @@ def manage_items(operation: str, title: str = "", item_id: str = "", description
     Batch delete: pass ids_json as JSON array of item IDs. Use recursive=true to delete descendants.
     """
     try:
+        item_id = _resolve(item_id)
+        parent_id = _resolve(parent_id)
         if operation == "create":
             if items_json:
                 items = json.loads(items_json)
@@ -78,6 +89,8 @@ def query_items(operation: str = "list", item_id: str = "", status: str = "",
     Use include_ancestors=true with get to see the full parent chain.
     """
     try:
+        item_id = _resolve(item_id)
+        parent_id = _resolve(parent_id)
         if operation == "get":
             result = engine.get_item(item_id)
             if not result:
@@ -111,7 +124,10 @@ def advance_item(item_id: str = "", trigger: str = "", transitions_json: str = "
     try:
         if transitions_json:
             transitions = json.loads(transitions_json)
+            for t in transitions:
+                t["item_id"] = _resolve(t["item_id"])
             return _json(engine.advance_items_batch(transitions))
+        item_id = _resolve(item_id)
         return _json(engine.advance_item(item_id, trigger))
     except Exception as e:
         return _err(e)
@@ -124,7 +140,7 @@ def get_next_status(item_id: str, trigger: str) -> str:
     Returns can_advance (bool), current status, next status, and any blockers.
     Use before advance_item to check feasibility without side effects.
     """
-    return _json(engine.get_next_status(item_id, trigger))
+    return _json(engine.get_next_status(_resolve(item_id), trigger))
 
 
 @mcp.tool()
@@ -148,7 +164,7 @@ def get_context(item_id: str = "", include_ancestors: bool = False) -> str:
     Call this at session start to understand current work state.
     """
     try:
-        return _json(engine.get_context(item_id or None, include_ancestors=include_ancestors))
+        return _json(engine.get_context(_resolve(item_id) or None, include_ancestors=include_ancestors))
     except Exception as e:
         return _err(e)
 
@@ -171,6 +187,7 @@ def manage_notes(operation: str, item_id: str, key: str = "", body: str = "", ro
     Use notes to capture requirements, decisions, done-criteria, and handoff context.
     """
     try:
+        item_id = _resolve(item_id)
         if operation == "upsert":
             return _json(engine.upsert_note(item_id, key, body, role))
         elif operation == "delete":
@@ -189,6 +206,7 @@ def query_notes(item_id: str, key: str = "", include_body: bool = True) -> str:
     With key: get a single note. Without key: list all notes for the item.
     """
     try:
+        item_id = _resolve(item_id)
         if key:
             from .db import get_connection
             conn = get_connection()
@@ -217,6 +235,9 @@ def manage_dependencies(operation: str, from_id: str = "", to_id: str = "",
     Dependencies enforce ordering — blocked items cannot advance until blockers reach unblock_at.
     """
     try:
+        from_id = _resolve(from_id)
+        to_id = _resolve(to_id)
+        item_id = _resolve(item_id)
         if operation == "add":
             return _json(engine.add_dependency(from_id, to_id, unblock_at=unblock_at))
         elif operation == "remove":
@@ -224,7 +245,7 @@ def manage_dependencies(operation: str, from_id: str = "", to_id: str = "",
         elif operation == "query":
             return _json(engine.get_dependencies(item_id or from_id, direction))
         elif operation == "pattern":
-            ids = [i.strip() for i in item_ids.split(",") if i.strip()]
+            ids = [_resolve(i.strip()) for i in item_ids.split(",") if i.strip()]
             return _json(engine.add_dependency_pattern(ids, pattern))
         return _json({"error": f"Invalid operation: {operation}. Use: add, remove, query, pattern"})
     except Exception as e:
@@ -240,6 +261,7 @@ def query_dependencies(item_id: str, direction: str = "outbound",
     Direction: outbound (what this blocks), inbound (what blocks this).
     """
     try:
+        item_id = _resolve(item_id)
         if neighbors_only:
             return _json(engine.get_dependencies(item_id, direction))
         return _json(engine.query_dependencies_bfs(item_id, direction, max_depth))
@@ -276,7 +298,7 @@ def complete_tree(parent_id: str) -> str:
     Skips items already in terminal status. Reports items that couldn't be completed (e.g., blocked by deps).
     """
     try:
-        return _json(engine.complete_tree(parent_id))
+        return _json(engine.complete_tree(_resolve(parent_id)))
     except Exception as e:
         return _err(e)
 
@@ -292,6 +314,7 @@ def manage_schemas(operation: str = "list", schema_name: str = "", item_id: str 
     - reload: reload schemas from config file
     """
     try:
+        item_id = _resolve(item_id)
         if operation == "list":
             return _json(get_schemas())
         elif operation == "get":
