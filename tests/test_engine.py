@@ -537,4 +537,61 @@ def test_invalid_cron_expression():
     """Invalid cron expression should raise VALIDATION error."""
     with pytest.raises(ToolError, match="Invalid cron expression"):
         _create("Bad Cron", schedule="not a cron")
-        _create("Bad Cron", schedule="not a cron")
+
+
+# --- Metrics ---
+
+def test_metrics_basic():
+    """Create items in various states, verify metric counts."""
+    # done items
+    for p in ("critical", "high", "medium"):
+        item = _create(f"Done-{p}", priority=p, tags="frontend,api")
+        engine.advance_item(item["id"], "complete")
+    # work item (WIP)
+    wip = _create("WIP", tags="backend")
+    engine.advance_item(wip["id"], "start")
+    # queue item (stale — backdate)
+    stale = _create("Stale")
+    conn = db.get_connection()
+    try:
+        old = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
+        conn.execute("UPDATE work_items SET updated_at=? WHERE id=?", (old, stale["id"]))
+        conn.commit()
+    finally:
+        conn.close()
+
+    m = engine.get_metrics(days=30)
+    assert m["period_days"] == 30
+    assert m["total_items"] == 5
+    assert m["wip"] == 1
+    assert m["by_priority"]["critical"] == 1
+    assert m["by_priority"]["high"] == 1
+    assert m["by_priority"]["medium"] == 1
+    assert m["by_priority"]["low"] == 0
+    assert m["lead_time_avg_seconds"] >= 0
+    assert m["stale_ratio"] > 0  # 1 stale out of 2 non-terminal
+    # by_tag: backend and frontend should appear (from non-terminal items)
+    assert "backend" in m["by_tag"]
+
+
+def test_metrics_throughput():
+    """Create done items, verify weekly breakdown."""
+    now = datetime.now(timezone.utc)
+    conn = db.get_connection()
+    try:
+        for i in range(3):
+            item = _create(f"T-{i}")
+            engine.advance_item(item["id"], "complete")
+            # Ensure all land in the same ISO week (now)
+    finally:
+        conn.close()
+
+    m = engine.get_metrics(days=30)
+    assert len(m["throughput_per_week"]) >= 1
+    total_throughput = sum(w["count"] for w in m["throughput_per_week"])
+    assert total_throughput >= 3
+    # Verify week format
+    for entry in m["throughput_per_week"]:
+        assert entry["week"].startswith(str(now.year))
+        assert "-W" in entry["week"]
+        assert isinstance(entry["count"], int)
