@@ -492,6 +492,7 @@ def test_fts_search_partial():
     assert "authentication" in items[0]["title"]
 
 
+
 # --- Scheduled Items ---
 
 def test_scheduled_item_create():
@@ -534,4 +535,5 @@ def test_scheduled_item_waits_for_next_run():
 def test_invalid_cron_expression():
     """Invalid cron expression should raise VALIDATION error."""
     with pytest.raises(ToolError, match="Invalid cron expression"):
+        _create("Bad Cron", schedule="not a cron")
         _create("Bad Cron", schedule="not a cron")
