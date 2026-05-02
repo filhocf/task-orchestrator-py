@@ -419,3 +419,30 @@ def test_get_next_item_overdue_priority():
     overdue = _create("Low priority overdue", priority="low", due_at=overdue_due)
     nxt = engine.get_next_item()
     assert nxt["id"] == overdue["id"]
+
+
+# --- FTS Search ---
+
+def test_fts_search_description():
+    """FTS5 finds items by description content."""
+    _create("Generic Title", description="quantum entanglement research")
+    items = engine.query_items(search="entanglement")
+    assert len(items) == 1
+    assert "entanglement" in items[0]["description"]
+
+
+def test_fts_search_notes():
+    """Search finds items via notes body content."""
+    item = _create("Plain Item")
+    engine.upsert_note(item["id"], "details", "flux capacitor specs")
+    items = engine.query_items(search="capacitor")
+    assert len(items) == 1
+    assert items[0]["id"] == item["id"]
+
+
+def test_fts_search_partial():
+    """FTS5 prefix search matches partial terms."""
+    _create("Implement authentication module")
+    items = engine.query_items(search="authent")
+    assert len(items) == 1
+    assert "authentication" in items[0]["title"]

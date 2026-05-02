@@ -48,6 +48,7 @@ def manage_items(operation: str, title: str = "", item_id: str = "", description
     Items support hierarchy via parent_id (max 4 levels deep).
     Batch create: pass items_json as JSON array of item objects.
     Batch delete: pass ids_json as JSON array of item IDs. Use recursive=true to delete descendants.
+    due_at: optional ISO 8601 datetime string for due date (e.g. '2025-12-31T23:59:59+00:00').
     """
     try:
         item_id = _resolve(item_id)
