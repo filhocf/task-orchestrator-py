@@ -362,6 +362,18 @@ def manage_schemas(operation: str = "list", schema_name: str = "", item_id: str 
 
 
 @mcp.tool()
+def get_metrics(days: int = 30) -> str:
+    """Work metrics — throughput per week, average lead time, WIP count, stale ratio, breakdowns by priority and tag.
+
+    Optional days param controls the lookback period (default: 30).
+    """
+    try:
+        return _json(engine.get_metrics(days=days))
+    except Exception as e:
+        return _err(e)
+
+
+@mcp.tool()
 def export_graph() -> str:
     """Export the entire work graph (items, notes, dependencies) as JSON.
 

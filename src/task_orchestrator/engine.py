@@ -251,6 +251,12 @@ def query_items(status: str | None = None, parent_id: str | None = None,
         if priority:
             clauses.append("priority=?")
             params.append(priority)
+        if tags:
+            tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+            tag_clauses = ["tags LIKE ?" for _ in tag_list]
+            clauses.append(f"({' OR '.join(tag_clauses)})")
+            params.extend([f"%{t}%" for t in tag_list])
+
         if search:
             # FTS5 match on title/description + LIKE on notes body, deduplicated
             fts_ids = _fts_search(conn, search)
@@ -268,11 +274,7 @@ def query_items(status: str | None = None, parent_id: str | None = None,
                 id_clauses.append(f"id IN ({','.join('?' for _ in chunk)})")
                 params.extend(chunk)
             clauses.append(f"({' OR '.join(id_clauses)})")
-        if tags:
-            tag_list = [t.strip() for t in tags.split(",") if t.strip()]
-            tag_clauses = ["tags LIKE ?" for _ in tag_list]
-            clauses.append(f"({' OR '.join(tag_clauses)})")
-            params.extend([f"%{t}%" for t in tag_list])
+
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         rows = conn.execute(
             f"SELECT * FROM work_items {where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
@@ -931,6 +933,93 @@ def complete_tree(parent_id: str) -> dict:
             except ValueError as e:
                 skipped.append({"id": item["id"], "title": item["title"], "reason": str(e)})
         return {"completed": completed, "skipped": skipped}
+    finally:
+        conn.close()
+
+
+# --- Metrics ---
+
+def get_metrics(days: int = 30) -> dict:
+    """Work metrics: throughput, lead time, WIP, stale ratio, breakdowns."""
+    conn = get_connection()
+    try:
+        now_dt = datetime.now(timezone.utc)
+        cutoff = (now_dt - timedelta(days=days)).isoformat()
+        stale_cutoff = (now_dt - timedelta(days=7)).isoformat()
+
+        # Throughput per week (done items in period, grouped by ISO week)
+        rows = conn.execute(
+            "SELECT updated_at FROM work_items WHERE status='done' AND updated_at >= ?",
+            (cutoff,),
+        ).fetchall()
+        week_counts: dict[str, int] = {}
+        for r in rows:
+            dt = datetime.fromisoformat(r["updated_at"])
+            iso = dt.isocalendar()
+            key = f"{iso[0]}-W{iso[1]:02d}"
+            week_counts[key] = week_counts.get(key, 0) + 1
+        throughput = [{"week": w, "count": c} for w, c in sorted(week_counts.items())]
+
+        # Lead time avg (done items in period)
+        lt_rows = conn.execute(
+            "SELECT created_at, updated_at FROM work_items WHERE status='done' AND updated_at >= ?",
+            (cutoff,),
+        ).fetchall()
+        if lt_rows:
+            total_secs = sum(
+                (datetime.fromisoformat(r["updated_at"]) - datetime.fromisoformat(r["created_at"])).total_seconds()
+                for r in lt_rows
+            )
+            lead_time_avg = total_secs / len(lt_rows)
+        else:
+            lead_time_avg = 0.0
+
+        # WIP
+        wip = conn.execute("SELECT COUNT(*) as cnt FROM work_items WHERE status='work'").fetchone()["cnt"]
+
+        # Stale ratio
+        non_terminal = conn.execute(
+            "SELECT COUNT(*) as cnt FROM work_items WHERE status NOT IN ('done','cancelled')"
+        ).fetchone()["cnt"]
+        stale = conn.execute(
+            "SELECT COUNT(*) as cnt FROM work_items WHERE status NOT IN ('done','cancelled') AND updated_at < ?",
+            (stale_cutoff,),
+        ).fetchone()["cnt"]
+        stale_ratio = (stale / non_terminal * 100) if non_terminal else 0.0
+
+        # By priority (done in period)
+        by_priority = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+        for r in conn.execute(
+            "SELECT priority, COUNT(*) as cnt FROM work_items WHERE status='done' AND updated_at >= ? GROUP BY priority",
+            (cutoff,),
+        ).fetchall():
+            if r["priority"] in by_priority:
+                by_priority[r["priority"]] = r["cnt"]
+
+        # By tag (top 10 tags across non-terminal items)
+        tag_counts: dict[str, int] = {}
+        for r in conn.execute(
+            "SELECT tags FROM work_items WHERE status NOT IN ('done','cancelled') AND tags != ''"
+        ).fetchall():
+            for tag in r["tags"].split(","):
+                tag = tag.strip()
+                if tag:
+                    tag_counts[tag] = tag_counts.get(tag, 0) + 1
+        by_tag = dict(sorted(tag_counts.items(), key=lambda x: -x[1])[:10])
+
+        # Total items
+        total = conn.execute("SELECT COUNT(*) as cnt FROM work_items").fetchone()["cnt"]
+
+        return {
+            "throughput_per_week": throughput,
+            "lead_time_avg_seconds": lead_time_avg,
+            "wip": wip,
+            "stale_ratio": stale_ratio,
+            "by_priority": by_priority,
+            "by_tag": by_tag,
+            "total_items": total,
+            "period_days": days,
+        }
     finally:
         conn.close()
 
