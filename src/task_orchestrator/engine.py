@@ -7,7 +7,7 @@ Terminal statuses: done, cancelled
 
 import sqlite3
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any
 
 from .db import get_connection
@@ -83,7 +83,8 @@ def _validate_priority(priority: str):
 def create_item(title: str, description: str = "", summary: str = "",
                 parent_id: str | None = None, priority: str = "medium",
                 complexity: int | None = None, item_type: str = "", tags: str = "",
-                metadata: str | None = None, properties: str | None = None) -> dict:
+                metadata: str | None = None, properties: str | None = None,
+                due_at: str | None = None) -> dict:
     _validate_priority(priority)
     if complexity is not None and not (1 <= complexity <= 10):
         raise ToolError("VALIDATION", f"Complexity must be 1-10, got {complexity}", "complexity")
@@ -100,10 +101,10 @@ def create_item(title: str, description: str = "", summary: str = "",
                 raise ToolError("VALIDATION", f"Max depth 4 reached (parent at depth {depth})", "parent_id")
         conn.execute(
             """INSERT INTO work_items (id,parent_id,title,description,summary,status,priority,
-               complexity,item_type,tags,metadata,properties,role_changed_at,created_at,updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               complexity,item_type,tags,metadata,properties,role_changed_at,due_at,created_at,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (item_id, parent_id, title, description, summary, "queue", priority,
-             complexity, item_type, tags, metadata, properties, now, now, now),
+             complexity, item_type, tags, metadata, properties, now, due_at, now, now),
         )
         conn.commit()
         return _row_to_dict(conn.execute("SELECT * FROM work_items WHERE id=?", (item_id,)).fetchone())
@@ -134,7 +135,7 @@ def update_item(item_id: str, **fields) -> dict:
     conn = get_connection()
     try:
         allowed = {"title", "description", "summary", "priority", "complexity",
-                   "item_type", "tags", "metadata", "properties"}
+                   "item_type", "tags", "metadata", "properties", "due_at"}
         updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
         if not updates:
             raise ToolError("VALIDATION", "No valid fields to update")
@@ -469,18 +470,47 @@ def _find_newly_unblocked(conn, completed_id: str) -> list[dict]:
     return unblocked
 
 
+def _get_due_soon(conn, now_dt: datetime) -> list[dict]:
+    """Items with due_at within next 24h that are not terminal."""
+    cutoff = (now_dt + timedelta(hours=24)).isoformat()
+    now_iso = now_dt.isoformat()
+    rows = conn.execute(
+        "SELECT * FROM work_items WHERE due_at IS NOT NULL AND due_at > ? AND due_at <= ? AND status NOT IN ('done','cancelled')",
+        (now_iso, cutoff),
+    ).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+def _get_overdue(conn, now_dt: datetime) -> list[dict]:
+    """Items with due_at in the past that are not terminal."""
+    now_iso = now_dt.isoformat()
+    rows = conn.execute(
+        "SELECT * FROM work_items WHERE due_at IS NOT NULL AND due_at <= ? AND status NOT IN ('done','cancelled')",
+        (now_iso,),
+    ).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
 def get_next_item() -> dict | None:
     conn = get_connection()
     try:
         rows = conn.execute(
             "SELECT * FROM work_items WHERE status IN ('queue','work') ORDER BY status ASC, created_at ASC",
         ).fetchall()
+        now_iso = _now()
         candidates = []
         for r in rows:
             blockers = _get_unsatisfied_blockers(conn, r["id"])
             if not blockers:
                 candidates.append(_row_to_dict(r))
-        candidates.sort(key=lambda x: (0 if x["status"] == "work" else 1, PRIORITY_ORDER.get(x["priority"], 2)))
+
+        def _sort_key(x):
+            overdue = 1
+            if x.get("due_at") and x["due_at"] <= now_iso:
+                overdue = 0
+            return (overdue, 0 if x["status"] == "work" else 1, PRIORITY_ORDER.get(x["priority"], 2))
+
+        candidates.sort(key=_sort_key)
         return candidates[0] if candidates else None
     finally:
         conn.close()
@@ -556,7 +586,9 @@ def get_context(item_id: str | None = None, include_ancestors: bool = False) -> 
                 stale_items.append(item)
         return {"counts": counts, "active": active, "blocked": blocked,
                 "recent_completed": recent, "next_item": next_item,
-                "stale_items": stale_items}
+                "stale_items": stale_items,
+                "due_soon": _get_due_soon(conn, now_dt),
+                "overdue": _get_overdue(conn, now_dt)}
     finally:
         conn.close()
 

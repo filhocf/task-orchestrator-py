@@ -386,3 +386,27 @@ def test_notes_upsert_update():
     updated = engine.upsert_note(item["id"], "key1", "v2")
     assert updated["body"] == "v2"
     assert len(engine.get_notes(item["id"])) == 1
+
+
+# --- Due Dates ---
+
+def test_due_date_create():
+    due = (datetime.now(timezone.utc) + timedelta(hours=5)).isoformat()
+    item = _create("Due Soon", due_at=due)
+    assert item["due_at"] == due
+
+
+def test_due_soon_detection():
+    due = (datetime.now(timezone.utc) + timedelta(hours=5)).isoformat()
+    item = _create("Due Soon", due_at=due)
+    ctx = engine.get_context()
+    due_soon_ids = [i["id"] for i in ctx["due_soon"]]
+    assert item["id"] in due_soon_ids
+
+
+def test_overdue_detection():
+    due = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    item = _create("Overdue", due_at=due)
+    ctx = engine.get_context()
+    overdue_ids = [i["id"] for i in ctx["overdue"]]
+    assert item["id"] in overdue_ids
