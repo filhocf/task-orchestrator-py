@@ -3,6 +3,7 @@
 import json
 from mcp.server.fastmcp import FastMCP
 from . import db, engine
+from .engine import ToolError
 from .schemas import get_schemas, load_schemas, get_schema_for_item
 from .prompts import register_prompts
 
@@ -19,6 +20,8 @@ def _json(obj) -> str:
 
 
 def _err(e: Exception) -> str:
+    if isinstance(e, ToolError):
+        return _json(e.to_dict())
     return _json({"error": str(e)})
 
 

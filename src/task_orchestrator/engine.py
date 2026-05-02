@@ -16,18 +16,35 @@ from .schemas import check_gate, should_skip_review, can_cancel, get_schema_for_
 VALID_STATUSES = {"queue", "work", "review", "done", "blocked", "cancelled"}
 
 
+class ToolError(Exception):
+    """Structured error with code, field, and message."""
+    CODES = {"NOT_FOUND", "VALIDATION", "CONFLICT", "DEPENDENCY_UNSATISFIED", "GATE_BLOCKED"}
+
+    def __init__(self, code: str, message: str, field: str = ""):
+        self.code = code
+        self.field = field
+        self.message = message
+        super().__init__(message)
+
+    def to_dict(self) -> dict:
+        d = {"error": {"code": self.code, "message": self.message}}
+        if self.field:
+            d["error"]["field"] = self.field
+        return d
+
+
 def resolve_short_id(prefix: str) -> str:
     """Resolve a 4+ char hex prefix to a full item ID."""
     if len(prefix) < 4:
-        raise ValueError("Short ID must be at least 4 characters")
+        raise ToolError("VALIDATION", "Short ID must be at least 4 characters", "id")
     conn = get_connection()
     try:
         rows = conn.execute("SELECT id FROM work_items WHERE id LIKE ?", (f"{prefix}%",)).fetchall()
         if len(rows) == 0:
-            raise ValueError(f"NOT_FOUND: no item matching prefix '{prefix}'")
+            raise ToolError("NOT_FOUND", f"No item matching prefix '{prefix}'", "id")
         if len(rows) > 1:
             ids = [r["id"] for r in rows]
-            raise ValueError(f"AMBIGUOUS: prefix '{prefix}' matches {len(ids)} items: {ids}")
+            raise ToolError("CONFLICT", f"Prefix '{prefix}' matches {len(ids)} items: {ids}", "id")
         return rows[0]["id"]
     finally:
         conn.close()
@@ -58,7 +75,7 @@ def _row_to_dict(row) -> dict | None:
 
 def _validate_priority(priority: str):
     if priority and priority not in PRIORITIES:
-        raise ValueError(f"Invalid priority: {priority}. Valid: {sorted(PRIORITIES)}")
+        raise ToolError("VALIDATION", f"Invalid priority: {priority}. Valid: {sorted(PRIORITIES)}", "priority")
 
 
 # --- WorkItem CRUD ---
@@ -69,7 +86,7 @@ def create_item(title: str, description: str = "", summary: str = "",
                 metadata: str | None = None, properties: str | None = None) -> dict:
     _validate_priority(priority)
     if complexity is not None and not (1 <= complexity <= 10):
-        raise ValueError(f"Complexity must be 1-10, got {complexity}")
+        raise ToolError("VALIDATION", f"Complexity must be 1-10, got {complexity}", "complexity")
     conn = get_connection()
     try:
         item_id = _uid()
@@ -77,10 +94,10 @@ def create_item(title: str, description: str = "", summary: str = "",
         if parent_id:
             parent = conn.execute("SELECT id FROM work_items WHERE id=?", (parent_id,)).fetchone()
             if not parent:
-                raise ValueError(f"Parent {parent_id} not found")
+                raise ToolError("NOT_FOUND", f"Parent {parent_id} not found", "parent_id")
             depth = _get_depth(conn, parent_id)
             if depth >= 3:
-                raise ValueError(f"Max depth 4 reached (parent at depth {depth})")
+                raise ToolError("VALIDATION", f"Max depth 4 reached (parent at depth {depth})", "parent_id")
         conn.execute(
             """INSERT INTO work_items (id,parent_id,title,description,summary,status,priority,
                complexity,item_type,tags,metadata,properties,role_changed_at,created_at,updated_at)
@@ -113,21 +130,21 @@ def update_item(item_id: str, **fields) -> dict:
         _validate_priority(fields["priority"])
     if "complexity" in fields and fields["complexity"] is not None:
         if not (1 <= fields["complexity"] <= 10):
-            raise ValueError(f"Complexity must be 1-10, got {fields['complexity']}")
+            raise ToolError("VALIDATION", f"Complexity must be 1-10, got {fields['complexity']}", "complexity")
     conn = get_connection()
     try:
         allowed = {"title", "description", "summary", "priority", "complexity",
                    "item_type", "tags", "metadata", "properties"}
         updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
         if not updates:
-            raise ValueError("No valid fields to update")
+            raise ToolError("VALIDATION", "No valid fields to update")
         updates["updated_at"] = _now()
         set_clause = ", ".join(f"{k}=?" for k in updates)
         conn.execute(f"UPDATE work_items SET {set_clause} WHERE id=?", (*updates.values(), item_id))
         conn.commit()
         row = conn.execute("SELECT * FROM work_items WHERE id=?", (item_id,)).fetchone()
         if not row:
-            raise ValueError(f"Item {item_id} not found")
+            raise ToolError("NOT_FOUND", f"Item {item_id} not found", "item_id")
         return _row_to_dict(row)
     finally:
         conn.close()
@@ -144,7 +161,7 @@ def delete_item(item_id: str, recursive: bool = False) -> dict:
                 "SELECT COUNT(*) as cnt FROM work_items WHERE parent_id=?", (item_id,)
             ).fetchone()["cnt"]
             if child_count > 0:
-                raise ValueError(f"Item has {child_count} children. Use recursive=true to delete them.")
+                raise ToolError("VALIDATION", f"Item has {child_count} children. Use recursive=true to delete them.", "item_id")
         cur = conn.execute("DELETE FROM work_items WHERE id=?", (item_id,))
         conn.commit()
         result = {"deleted": cur.rowcount > 0}
@@ -273,7 +290,7 @@ def _get_depth(conn, item_id: str) -> int:
 
 def advance_item(item_id: str, trigger: str) -> dict:
     if trigger not in TRANSITIONS and trigger not in ("resume", "hold"):
-        raise ValueError(f"Invalid trigger: {trigger}. Valid: {list(TRANSITIONS.keys()) + ['resume', 'hold']}")
+        raise ToolError("VALIDATION", f"Invalid trigger: {trigger}. Valid: {list(TRANSITIONS.keys()) + ['resume', 'hold']}", "trigger")
     # hold is alias for block
     if trigger == "hold":
         trigger = "block"
@@ -281,21 +298,21 @@ def advance_item(item_id: str, trigger: str) -> dict:
     try:
         row = conn.execute("SELECT * FROM work_items WHERE id=?", (item_id,)).fetchone()
         if not row:
-            raise ValueError(f"Item {item_id} not found")
+            raise ToolError("NOT_FOUND", f"Item {item_id} not found", "item_id")
         current = row["status"]
 
         if trigger == "resume":
             if current != "blocked":
-                raise ValueError(f"Can only resume blocked items, current: {current}")
+                raise ToolError("CONFLICT", f"Can only resume blocked items, current: {current}", "trigger")
             new_status = row["previous_status"] or "work"
         elif trigger == "block":
             if current in TERMINAL or current == "blocked":
-                raise ValueError(f"Cannot block from {current}")
+                raise ToolError("CONFLICT", f"Cannot block from {current}", "trigger")
             new_status = "blocked"
             conn.execute("UPDATE work_items SET previous_status=? WHERE id=?", (current, item_id))
         else:
             if current not in TRANSITIONS[trigger]:
-                raise ValueError(f"Cannot {trigger} from {current}")
+                raise ToolError("CONFLICT", f"Cannot {trigger} from {current}", "trigger")
             new_status = TRANSITIONS[trigger][current]
 
         # Check dependencies for advancing triggers
@@ -303,7 +320,7 @@ def advance_item(item_id: str, trigger: str) -> dict:
             blockers = _get_unsatisfied_blockers(conn, item_id)
             if blockers:
                 titles = [b["title"] for b in blockers]
-                raise ValueError(f"Blocked by unfinished items: {', '.join(titles)}")
+                raise ToolError("DEPENDENCY_UNSATISFIED", f"Blocked by unfinished items: {', '.join(titles)}", "item_id")
 
         # Check note schema gates
         if trigger in ("start", "complete"):
@@ -313,12 +330,14 @@ def advance_item(item_id: str, trigger: str) -> dict:
             gate = check_gate(item_dict, notes, new_status)
             if not gate["can_advance"]:
                 missing_keys = [m["key"] for m in gate["missing"]]
-                raise ValueError(f"Gate check failed. Missing required notes: {', '.join(missing_keys)}"
-                                 + (f". Hint: {gate['guidance']}" if gate["guidance"] else ""))
+                raise ToolError("GATE_BLOCKED",
+                                f"Missing required notes: {', '.join(missing_keys)}"
+                                + (f". Hint: {gate['guidance']}" if gate["guidance"] else ""),
+                                "item_id")
 
         # Check cancel permission (permanent lifecycle)
         if trigger == "cancel" and not can_cancel(_row_to_dict(row)):
-            raise ValueError("Cannot cancel: item has permanent lifecycle")
+            raise ToolError("CONFLICT", "Cannot cancel: item has permanent lifecycle", "trigger")
 
         # Auto-skip review for 'auto' lifecycle
         if trigger == "start" and new_status == "review" and should_skip_review(_row_to_dict(row)):
@@ -366,7 +385,7 @@ def advance_items_batch(transitions: list[dict]) -> dict:
                            "applied": True, "new_status": result["status"]})
             all_unblocked.extend(result.get("unblocked_items", []))
             succeeded += 1
-        except ValueError as e:
+        except (ValueError, ToolError) as e:
             results.append({"item_id": t["item_id"], "trigger": t["trigger"],
                            "applied": False, "error": str(e)})
             failed += 1
@@ -491,7 +510,7 @@ def get_context(item_id: str | None = None, include_ancestors: bool = False) -> 
         if item_id:
             row = conn.execute("SELECT * FROM work_items WHERE id=?", (item_id,)).fetchone()
             if not row:
-                raise ValueError(f"Item {item_id} not found")
+                raise ToolError("NOT_FOUND", f"Item {item_id} not found", "item_id")
             item = _row_to_dict(row)
             children = [_row_to_dict(r) for r in conn.execute(
                 "SELECT * FROM work_items WHERE parent_id=?", (item_id,)).fetchall()]
@@ -536,7 +555,7 @@ def upsert_note(item_id: str, key: str, body: str, role: str = "queue") -> dict:
     try:
         item = conn.execute("SELECT * FROM work_items WHERE id=?", (item_id,)).fetchone()
         if not item:
-            raise ValueError(f"Item {item_id} not found")
+            raise ToolError("NOT_FOUND", f"Item {item_id} not found", "item_id")
         now = _now()
         existing = conn.execute("SELECT id FROM notes WHERE item_id=? AND key=?", (item_id, key)).fetchone()
         if existing:
@@ -591,16 +610,16 @@ def add_dependency(from_id: str, to_id: str, dep_type: str = "blocks",
     unblock_at: status at which the blocker unblocks (default: done).
     Valid: done, review, work. RELATES_TO deps cannot have unblock_at."""
     if from_id == to_id:
-        raise ValueError("Cannot depend on self")
+        raise ToolError("VALIDATION", "Cannot depend on self", "from_id")
     valid_types = {"blocks", "is_blocked_by", "relates_to"}
     dep_type = dep_type.lower().replace("-", "_")
     if dep_type not in valid_types:
-        raise ValueError(f"Invalid dep_type: {dep_type}. Valid: {sorted(valid_types)}")
+        raise ToolError("VALIDATION", f"Invalid dep_type: {dep_type}. Valid: {sorted(valid_types)}", "dep_type")
     if dep_type == "relates_to" and unblock_at != "done":
-        raise ValueError("RELATES_TO dependencies cannot have unblock_at threshold")
+        raise ToolError("VALIDATION", "RELATES_TO dependencies cannot have unblock_at threshold", "unblock_at")
     valid_unblock = {"done", "review", "work"}
     if unblock_at not in valid_unblock:
-        raise ValueError(f"Invalid unblock_at: {unblock_at}. Valid: {sorted(valid_unblock)}")
+        raise ToolError("VALIDATION", f"Invalid unblock_at: {unblock_at}. Valid: {sorted(valid_unblock)}", "unblock_at")
     # IS_BLOCKED_BY is stored as BLOCKS with swapped direction
     if dep_type == "is_blocked_by":
         from_id, to_id = to_id, from_id
@@ -609,9 +628,9 @@ def add_dependency(from_id: str, to_id: str, dep_type: str = "blocks",
     try:
         for fid in (from_id, to_id):
             if not conn.execute("SELECT id FROM work_items WHERE id=?", (fid,)).fetchone():
-                raise ValueError(f"Item {fid} not found")
+                raise ToolError("NOT_FOUND", f"Item {fid} not found", "from_id")
         if dep_type != "relates_to" and _would_create_cycle(conn, from_id, to_id):
-            raise ValueError("Dependency would create a cycle")
+            raise ToolError("CONFLICT", "Dependency would create a cycle", "from_id")
         dep_id = _uid()
         now = _now()
         try:
@@ -619,7 +638,7 @@ def add_dependency(from_id: str, to_id: str, dep_type: str = "blocks",
                           (dep_id, from_id, to_id, dep_type, unblock_at, now))
             conn.commit()
         except sqlite3.IntegrityError:
-            raise ValueError(f"Dependency {from_id} → {to_id} already exists")
+            raise ToolError("CONFLICT", f"Dependency {from_id} → {to_id} already exists", "from_id")
         return _row_to_dict(conn.execute("SELECT * FROM dependencies WHERE id=?", (dep_id,)).fetchone())
     finally:
         conn.close()
@@ -628,7 +647,7 @@ def add_dependency(from_id: str, to_id: str, dep_type: str = "blocks",
 def add_dependency_pattern(item_ids: list[str], pattern: str = "linear") -> list[dict]:
     """Create dependencies using pattern shortcuts: linear, fan-out, fan-in."""
     if len(item_ids) < 2:
-        raise ValueError("Need at least 2 items for a dependency pattern")
+        raise ToolError("VALIDATION", "Need at least 2 items for a dependency pattern", "item_ids")
     results = []
     if pattern == "linear":
         for i in range(len(item_ids) - 1):
@@ -642,7 +661,7 @@ def add_dependency_pattern(item_ids: list[str], pattern: str = "linear") -> list
         for source in item_ids[:-1]:
             results.append(add_dependency(source, target))
     else:
-        raise ValueError(f"Invalid pattern: {pattern}. Valid: linear, fan-out, fan-in")
+        raise ToolError("VALIDATION", f"Invalid pattern: {pattern}. Valid: linear, fan-out, fan-in", "pattern")
     return results
 
 
