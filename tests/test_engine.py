@@ -595,3 +595,43 @@ def test_metrics_throughput():
         assert entry["week"].startswith(str(now.year))
         assert "-W" in entry["week"]
         assert isinstance(entry["count"], int)
+
+
+# --- _parse_dt helper ---
+
+def test_parse_dt_aware():
+    dt = engine._parse_dt("2026-05-03T12:00:00+00:00")
+    assert dt.tzinfo is not None
+
+def test_parse_dt_naive_assumes_utc():
+    dt = engine._parse_dt("2026-05-03 12:00:00")
+    assert dt.tzinfo == timezone.utc
+
+def test_get_context_with_naive_timestamps():
+    """get_context should not crash when items have naive datetime strings."""
+    item = _create("Naive TS item")
+    # Manually set created_at/updated_at to naive format (simulating old/imported data)
+    conn = db.get_connection()
+    conn.execute(
+        "UPDATE work_items SET created_at='2026-01-01 00:00:00', updated_at='2026-01-01 00:00:00' WHERE id=?",
+        (item["id"],),
+    )
+    conn.commit()
+    conn.close()
+    # Should not raise "can't subtract offset-naive and offset-aware datetimes"
+    ctx = engine.get_context()
+    assert "counts" in ctx
+
+def test_get_metrics_with_naive_timestamps():
+    """get_metrics should not crash when done items have naive datetime strings."""
+    item = _create("Naive metrics item")
+    engine.advance_item(item["id"], "complete")
+    conn = db.get_connection()
+    conn.execute(
+        "UPDATE work_items SET created_at='2026-01-01 00:00:00', updated_at='2026-05-03 00:00:00' WHERE id=?",
+        (item["id"],),
+    )
+    conn.commit()
+    conn.close()
+    metrics = engine.get_metrics(days=365)
+    assert metrics["lead_time_avg_seconds"] > 0
