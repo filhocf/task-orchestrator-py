@@ -6,27 +6,32 @@ on:
   pull_request:
     branches: [main]
 
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+permissions:
+  contents: read
 
+jobs:
+  lint:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+      - run: uv tool run ruff check src/ tests/
+      - run: uv tool run ruff format --check src/ tests/
 
+  test:
+    runs-on: ubuntu-latest
+    needs: lint
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
-
       - uses: astral-sh/setup-uv@v7
-
-      - name: Install dependencies
-        run: |
-          uv venv .venv
-          uv pip install -e '.[test]'
-          uv pip install croniter
-
-      - name: Run tests
-        run: .venv/bin/python -m pytest tests/ -v --tb=short
+      - name: Install
+        run: uv sync --group dev
+      - name: Test
+        run: uv run pytest tests/ -v --tb=short

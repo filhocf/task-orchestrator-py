@@ -1,7 +1,5 @@
 """Shared fixtures for task-orchestrator tests."""
 
-import os
-import tempfile
 import pytest
 
 from task_orchestrator import db

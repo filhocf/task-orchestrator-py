@@ -8,9 +8,8 @@ Terminal statuses: done, cancelled
 import sqlite3
 import uuid
 from datetime import datetime, timezone, timedelta
-from typing import Any
 
-from .db import get_connection, fts_available
+from .db import get_connection
 from .schemas import check_gate, should_skip_review, can_cancel, get_schema_for_item, should_auto_reopen
 
 from croniter import croniter, CroniterBadCronError

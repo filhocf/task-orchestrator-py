@@ -1,6 +1,5 @@
 """Comprehensive tests for task_orchestrator.engine."""
 
-import time
 from datetime import datetime, timezone, timedelta
 
 import pytest
@@ -74,7 +73,7 @@ def test_delete_item_recursive():
 
 def test_query_items_by_status():
     a = _create("A")
-    b = _create("B")
+    _create("B")
     engine.advance_item(a["id"], "start")  # queue -> work
     items = engine.query_items(status="work")
     assert len(items) == 1

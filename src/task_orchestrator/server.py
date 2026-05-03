@@ -65,16 +65,26 @@ def manage_items(operation: str, title: str = "", item_id: str = "", description
                 due_at=due_at or None))
         elif operation == "update":
             kwargs = {}
-            if title: kwargs["title"] = title
-            if description: kwargs["description"] = description
-            if summary: kwargs["summary"] = summary
-            if priority: kwargs["priority"] = priority
-            if complexity is not None: kwargs["complexity"] = complexity
-            if item_type: kwargs["item_type"] = item_type
-            if tags: kwargs["tags"] = tags
-            if metadata: kwargs["metadata"] = metadata
-            if properties: kwargs["properties"] = properties
-            if due_at: kwargs["due_at"] = due_at
+            if title:
+                kwargs["title"] = title
+            if description:
+                kwargs["description"] = description
+            if summary:
+                kwargs["summary"] = summary
+            if priority:
+                kwargs["priority"] = priority
+            if complexity is not None:
+                kwargs["complexity"] = complexity
+            if item_type:
+                kwargs["item_type"] = item_type
+            if tags:
+                kwargs["tags"] = tags
+            if metadata:
+                kwargs["metadata"] = metadata
+            if properties:
+                kwargs["properties"] = properties
+            if due_at:
+                kwargs["due_at"] = due_at
             return _json(engine.update_item(item_id, **kwargs))
         elif operation == "delete":
             if ids_json:
