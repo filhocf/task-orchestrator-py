@@ -63,6 +63,14 @@ TRANSITIONS = {
 }
 
 
+def _parse_dt(s: str) -> datetime:
+    """Parse ISO datetime string, assuming UTC if no timezone info."""
+    dt = datetime.fromisoformat(s)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -655,7 +663,7 @@ def get_context(item_id: str | None = None, include_ancestors: bool = False) -> 
             "SELECT * FROM work_items WHERE status IN ('queue','work')"
         ).fetchall():
             item = _row_to_dict(row)
-            updated = datetime.fromisoformat(item["updated_at"])
+            updated = _parse_dt(item["updated_at"])
             days = (now_dt - updated).days
             if (item["status"] == "queue" and days > 7) or (item["status"] == "work" and days > 3):
                 item["stale_days"] = days
@@ -954,7 +962,7 @@ def get_metrics(days: int = 30) -> dict:
         ).fetchall()
         week_counts: dict[str, int] = {}
         for r in rows:
-            dt = datetime.fromisoformat(r["updated_at"])
+            dt = _parse_dt(r["updated_at"])
             iso = dt.isocalendar()
             key = f"{iso[0]}-W{iso[1]:02d}"
             week_counts[key] = week_counts.get(key, 0) + 1
@@ -967,7 +975,7 @@ def get_metrics(days: int = 30) -> dict:
         ).fetchall()
         if lt_rows:
             total_secs = sum(
-                (datetime.fromisoformat(r["updated_at"]) - datetime.fromisoformat(r["created_at"])).total_seconds()
+                (_parse_dt(r["updated_at"]) - _parse_dt(r["created_at"])).total_seconds()
                 for r in lt_rows
             )
             lead_time_avg = total_secs / len(lt_rows)
