@@ -57,7 +57,8 @@ class TestWorkspaceCRUD:
 class TestWorkspaceExtendedFields:
     def test_create_with_all_fields(self):
         workspace.create_workspace(
-            "dtp", ["mir", "rer"],
+            "dtp",
+            ["mir", "rer"],
             memory_tags=["mir", "dtp"],
             repos=["~/git/mir"],
             conventions="Python 3.11+, pytest",
@@ -89,7 +90,8 @@ class TestWorkspaceExtendedFields:
 
     def test_get_workspace_context(self):
         workspace.create_workspace(
-            "dtp", ["mir"],
+            "dtp",
+            ["mir"],
             memory_tags=["mir"],
             description="Work",
         )
@@ -162,8 +164,12 @@ class TestScopedQueries:
 
 class TestGetWorkspaceContext:
     def _setup(self):
-        workspace.create_workspace("mir", ["mir", "roma"], memory_tags=["mir", "spring-boot"],
-                                   description="MIR - Sistema gov.br")
+        workspace.create_workspace(
+            "mir",
+            ["mir", "roma"],
+            memory_tags=["mir", "spring-boot"],
+            description="MIR - Sistema gov.br",
+        )
         engine.create_item(title="API endpoint", tags="mir", priority="high")
         engine.create_item(title="DB migration", tags="roma", priority="medium")
         engine.create_item(title="Unrelated", tags="other")
@@ -222,6 +228,7 @@ class TestGetWorkspaceContext:
 
     def test_output_is_json_serializable(self):
         import json
+
         self._setup()
         ctx = engine.get_workspace_context("mir", verbosity="full")
         # Should not raise

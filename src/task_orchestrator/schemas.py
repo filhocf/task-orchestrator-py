@@ -107,11 +107,13 @@ def check_gate(item: dict, notes: list[dict], target_role: str) -> dict:
         if note_def["role"] not in roles_to_check:
             continue
         if note_def["key"] not in filled_keys:
-            missing.append({
-                "key": note_def["key"],
-                "role": note_def["role"],
-                "description": note_def.get("description", ""),
-            })
+            missing.append(
+                {
+                    "key": note_def["key"],
+                    "role": note_def["role"],
+                    "description": note_def.get("description", ""),
+                }
+            )
 
     guidance = missing[0]["description"] if missing else None
     return {"can_advance": len(missing) == 0, "missing": missing, "guidance": guidance}

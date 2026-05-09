@@ -89,8 +89,12 @@ Steps:
     @mcp.prompt()
     def dependency_manager(item_id: str = "") -> str:
         """Visualize, create, and diagnose dependencies between work items."""
-        target = f' for item {item_id}' if item_id else ''
-        query = f'query_dependencies(item_id="{item_id}", neighbors_only=false)' if item_id else 'get_blocked_items()'
+        target = f" for item {item_id}" if item_id else ""
+        query = (
+            f'query_dependencies(item_id="{item_id}", neighbors_only=false)'
+            if item_id
+            else "get_blocked_items()"
+        )
         return f"""Visualize and manage dependencies{target}.
 
 Steps:
