@@ -3,7 +3,6 @@
 import json
 import pytest
 
-from task_orchestrator import db
 from task_orchestrator import engine
 from task_orchestrator import workspace
 
@@ -227,7 +226,6 @@ class TestGetWorkspaceContext:
         assert item2["id"] in blocked_ids
 
     def test_output_is_json_serializable(self):
-        import json
 
         self._setup()
         ctx = engine.get_workspace_context("mir", verbosity="full")
