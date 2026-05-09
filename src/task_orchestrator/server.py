@@ -403,7 +403,7 @@ def export_graph(workspace: str = "", tags: str = "") -> str:
     """
     try:
         tags_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
-        return _json(engine.export_graph(workspace=workspace, tags=tags_list))
+        return _json(engine.export_graph(workspace=workspace or None, tags=tags_list))
     except Exception as e:
         return _err(e)
 

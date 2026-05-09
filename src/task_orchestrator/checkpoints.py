@@ -96,15 +96,18 @@ def auto_recover() -> dict | None:
     latest = checkpoints[0]
     logger.info("Recovering from checkpoint: %s", latest["filename"])
 
-    # Remove corrupt DB
+    # Remove corrupt DB and WAL/SHM files
     db_path = _db.DB_PATH
-    if os.path.exists(db_path):
-        os.remove(db_path)
-    # Remove WAL/SHM files
-    for suffix in ("-wal", "-shm"):
-        p = db_path + suffix
-        if os.path.exists(p):
-            os.remove(p)
+    try:
+        if os.path.exists(db_path):
+            os.remove(db_path)
+        for suffix in ("-wal", "-shm"):
+            p = db_path + suffix
+            if os.path.exists(p):
+                os.remove(p)
+    except OSError as e:
+        logger.error("Failed to remove corrupt DB files: %s", e)
+        return {"recovered": False, "reason": f"file removal failed: {e}"}
 
     # Re-init and import
     _db.init_db()

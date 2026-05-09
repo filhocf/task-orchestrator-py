@@ -1066,7 +1066,7 @@ def get_metrics(days: int = 30, workspace: str | None = None) -> dict:
 
 # --- Export / Import ---
 
-def export_graph(workspace: str = "", tags: list[str] | None = None) -> dict:
+def export_graph(workspace: str | None = None, tags: list[str] | None = None) -> dict:
     """Export items, notes, and dependencies as a JSON-serializable dict.
 
     If workspace or tags are provided, only items matching those tags are exported
@@ -1075,14 +1075,22 @@ def export_graph(workspace: str = "", tags: list[str] | None = None) -> dict:
     """
     conn = get_connection()
     try:
-        filter_tags = tags or ([workspace] if workspace else [])
-        if filter_tags:
-            # Filter items that have any of the specified tags
+        if tags:
+            # Direct tag filter
             all_items = [_row_to_dict(r) for r in conn.execute("SELECT * FROM work_items").fetchall()]
             items = [
                 i for i in all_items
-                if i.get("tags") and any(t in i["tags"].split(",") for t in filter_tags)
+                if i.get("tags") and any(t in i["tags"].split(",") for t in tags)
             ]
+        elif workspace:
+            # Use same _workspace_tag_filter pattern as get_context
+            ws_clause, ws_params = _workspace_tag_filter(workspace)
+            items = [_row_to_dict(r) for r in conn.execute(
+                f"SELECT * FROM work_items WHERE {ws_clause}", ws_params).fetchall()]
+        else:
+            items = None
+
+        if items is not None:
             item_ids = {i["id"] for i in items}
             notes = [
                 _row_to_dict(r) for r in conn.execute("SELECT * FROM notes").fetchall()
@@ -1171,6 +1179,7 @@ def import_graph(data: dict, mode: str = "merge") -> dict:
 
 def _merge_notes(conn, notes: list[dict]):
     """Insert new notes, update existing ones if incoming is newer."""
+    columns = _get_table_columns(conn, "notes")
     for note in notes:
         existing = conn.execute(
             "SELECT updated_at FROM notes WHERE item_id = ? AND key = ?",
@@ -1178,7 +1187,6 @@ def _merge_notes(conn, notes: list[dict]):
         ).fetchone()
         if existing is None:
             # Insert new note
-            columns = _get_table_columns(conn, "notes")
             cols = [c for c in columns if c in note]
             placeholders = ",".join("?" for _ in cols)
             col_names = ",".join(cols)

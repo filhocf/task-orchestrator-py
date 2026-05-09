@@ -7,12 +7,21 @@ import pytest
 
 from task_orchestrator import db, engine
 from task_orchestrator import checkpoints
+from task_orchestrator import workspace
 
 
 # --- Helpers ---
 
 def _create(title="Test Item", **kw):
     return engine.create_item(title=title, **kw)
+
+
+def _setup_workspace(name, tags):
+    """Create a workspace config for testing (idempotent)."""
+    try:
+        workspace.create_workspace(name, tags=tags)
+    except ValueError:
+        pass  # already exists
 
 
 # --- Filtered Export ---
@@ -25,6 +34,7 @@ class TestFilteredExport:
         assert len(result["items"]) == 2
 
     def test_export_workspace_filter(self):
+        _setup_workspace("dtp", ["dtp"])
         _create("Item A", tags="dtp,backend")
         _create("Item B", tags="mir,frontend")
         _create("Item C", tags="dtp,frontend")
@@ -41,6 +51,7 @@ class TestFilteredExport:
         assert result["items"][0]["title"] == "Item B"
 
     def test_export_filter_includes_notes(self):
+        _setup_workspace("dtp", ["dtp"])
         item = _create("Item A", tags="dtp")
         _create("Item B", tags="mir")
         engine.upsert_note(item["id"], key="spec", body="hello", role="queue")
@@ -49,6 +60,7 @@ class TestFilteredExport:
         assert result["notes"][0]["key"] == "spec"
 
     def test_export_filter_includes_deps_between_filtered_items(self):
+        _setup_workspace("dtp", ["dtp"])
         a = _create("A", tags="dtp")
         b = _create("B", tags="dtp")
         c = _create("C", tags="mir")
