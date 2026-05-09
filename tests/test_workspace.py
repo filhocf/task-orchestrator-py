@@ -1,9 +1,7 @@
 """Tests for workspace entity and scoped queries."""
 
-import json
 import pytest
 
-from task_orchestrator import db
 from task_orchestrator import engine
 from task_orchestrator import workspace
 
