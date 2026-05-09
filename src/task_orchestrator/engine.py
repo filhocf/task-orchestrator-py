@@ -10,7 +10,13 @@ import uuid
 from datetime import datetime, timezone, timedelta
 
 from .db import get_connection
-from .schemas import check_gate, should_skip_review, can_cancel, get_schema_for_item, should_auto_reopen
+from .schemas import (
+    check_gate,
+    should_skip_review,
+    can_cancel,
+    get_schema_for_item,
+    should_auto_reopen,
+)
 
 from croniter import croniter, CroniterBadCronError
 
@@ -21,7 +27,14 @@ VALID_STATUSES = {"queue", "work", "review", "done", "blocked", "cancelled"}
 
 class ToolError(Exception):
     """Structured error with code, field, and message."""
-    CODES = {"NOT_FOUND", "VALIDATION", "CONFLICT", "DEPENDENCY_UNSATISFIED", "GATE_BLOCKED"}
+
+    CODES = {
+        "NOT_FOUND",
+        "VALIDATION",
+        "CONFLICT",
+        "DEPENDENCY_UNSATISFIED",
+        "GATE_BLOCKED",
+    }
 
     def __init__(self, code: str, message: str, field: str = ""):
         self.code = code
@@ -42,15 +55,21 @@ def resolve_short_id(prefix: str) -> str:
         raise ToolError("VALIDATION", "Short ID must be at least 4 characters", "id")
     conn = get_connection()
     try:
-        rows = conn.execute("SELECT id FROM work_items WHERE id LIKE ?", (f"{prefix}%",)).fetchall()
+        rows = conn.execute(
+            "SELECT id FROM work_items WHERE id LIKE ?", (f"{prefix}%",)
+        ).fetchall()
         if len(rows) == 0:
             raise ToolError("NOT_FOUND", f"No item matching prefix '{prefix}'", "id")
         if len(rows) > 1:
             ids = [r["id"] for r in rows]
-            raise ToolError("CONFLICT", f"Prefix '{prefix}' matches {len(ids)} items: {ids}", "id")
+            raise ToolError(
+                "CONFLICT", f"Prefix '{prefix}' matches {len(ids)} items: {ids}", "id"
+            )
         return rows[0]["id"]
     finally:
         conn.close()
+
+
 TERMINAL = {"done", "cancelled"}
 PRIORITIES = {"critical", "high", "medium", "low"}
 PRIORITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
@@ -59,7 +78,12 @@ TRANSITIONS = {
     "start": {"queue": "work", "work": "review", "review": "done"},
     "complete": {"queue": "done", "work": "done", "review": "done"},
     "block": {"queue": "blocked", "work": "blocked", "review": "blocked"},
-    "cancel": {"queue": "cancelled", "work": "cancelled", "review": "cancelled", "blocked": "cancelled"},
+    "cancel": {
+        "queue": "cancelled",
+        "work": "cancelled",
+        "review": "cancelled",
+        "blocked": "cancelled",
+    },
     "reopen": {"done": "queue", "cancelled": "queue"},
 }
 
@@ -86,7 +110,11 @@ def _row_to_dict(row) -> dict | None:
 
 def _validate_priority(priority: str):
     if priority and priority not in PRIORITIES:
-        raise ToolError("VALIDATION", f"Invalid priority: {priority}. Valid: {sorted(PRIORITIES)}", "priority")
+        raise ToolError(
+            "VALIDATION",
+            f"Invalid priority: {priority}. Valid: {sorted(PRIORITIES)}",
+            "priority",
+        )
 
 
 def _validate_due_at(due_at: str | None):
@@ -94,7 +122,11 @@ def _validate_due_at(due_at: str | None):
         try:
             datetime.fromisoformat(due_at)
         except (ValueError, TypeError):
-            raise ToolError("VALIDATION", f"Invalid due_at: {due_at}. Must be ISO 8601 datetime string.", "due_at")
+            raise ToolError(
+                "VALIDATION",
+                f"Invalid due_at: {due_at}. Must be ISO 8601 datetime string.",
+                "due_at",
+            )
 
 
 def _workspace_tag_filter(workspace: str | None) -> tuple[str, list[str]]:
@@ -110,41 +142,87 @@ def _workspace_tag_filter(workspace: str | None) -> tuple[str, list[str]]:
 
 # --- WorkItem CRUD ---
 
-def create_item(title: str, description: str = "", summary: str = "",
-                parent_id: str | None = None, priority: str = "medium",
-                complexity: int | None = None, item_type: str = "", tags: str = "",
-                metadata: str | None = None, properties: str | None = None,
-                due_at: str | None = None, schedule: str | None = None) -> dict:
+
+def create_item(
+    title: str,
+    description: str = "",
+    summary: str = "",
+    parent_id: str | None = None,
+    priority: str = "medium",
+    complexity: int | None = None,
+    item_type: str = "",
+    tags: str = "",
+    metadata: str | None = None,
+    properties: str | None = None,
+    due_at: str | None = None,
+    schedule: str | None = None,
+) -> dict:
     _validate_priority(priority)
     _validate_due_at(due_at)
     if complexity is not None and not (1 <= complexity <= 10):
-        raise ToolError("VALIDATION", f"Complexity must be 1-10, got {complexity}", "complexity")
+        raise ToolError(
+            "VALIDATION", f"Complexity must be 1-10, got {complexity}", "complexity"
+        )
     conn = get_connection()
     try:
         item_id = _uid()
         now = _now()
         if parent_id:
-            parent = conn.execute("SELECT id FROM work_items WHERE id=?", (parent_id,)).fetchone()
+            parent = conn.execute(
+                "SELECT id FROM work_items WHERE id=?", (parent_id,)
+            ).fetchone()
             if not parent:
-                raise ToolError("NOT_FOUND", f"Parent {parent_id} not found", "parent_id")
+                raise ToolError(
+                    "NOT_FOUND", f"Parent {parent_id} not found", "parent_id"
+                )
             depth = _get_depth(conn, parent_id)
             if depth >= 3:
-                raise ToolError("VALIDATION", f"Max depth 4 reached (parent at depth {depth})", "parent_id")
+                raise ToolError(
+                    "VALIDATION",
+                    f"Max depth 4 reached (parent at depth {depth})",
+                    "parent_id",
+                )
         next_run_at = None
         if schedule:
             try:
-                next_run_at = croniter(schedule, datetime.now(timezone.utc)).get_next(datetime).isoformat()
+                next_run_at = (
+                    croniter(schedule, datetime.now(timezone.utc))
+                    .get_next(datetime)
+                    .isoformat()
+                )
             except CroniterBadCronError:
-                raise ToolError("VALIDATION", f"Invalid cron expression: {schedule}", "schedule")
+                raise ToolError(
+                    "VALIDATION", f"Invalid cron expression: {schedule}", "schedule"
+                )
         conn.execute(
             """INSERT INTO work_items (id,parent_id,title,description,summary,status,priority,
                complexity,item_type,tags,metadata,properties,role_changed_at,due_at,schedule,next_run_at,created_at,updated_at)
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (item_id, parent_id, title, description, summary, "queue", priority,
-             complexity, item_type, tags, metadata, properties, now, due_at, schedule, next_run_at, now, now),
+            (
+                item_id,
+                parent_id,
+                title,
+                description,
+                summary,
+                "queue",
+                priority,
+                complexity,
+                item_type,
+                tags,
+                metadata,
+                properties,
+                now,
+                due_at,
+                schedule,
+                next_run_at,
+                now,
+                now,
+            ),
         )
         conn.commit()
-        return _row_to_dict(conn.execute("SELECT * FROM work_items WHERE id=?", (item_id,)).fetchone())
+        return _row_to_dict(
+            conn.execute("SELECT * FROM work_items WHERE id=?", (item_id,)).fetchone()
+        )
     finally:
         conn.close()
 
@@ -170,22 +248,48 @@ def update_item(item_id: str, **fields) -> dict:
         _validate_due_at(fields["due_at"])
     if "complexity" in fields and fields["complexity"] is not None:
         if not (1 <= fields["complexity"] <= 10):
-            raise ToolError("VALIDATION", f"Complexity must be 1-10, got {fields['complexity']}", "complexity")
+            raise ToolError(
+                "VALIDATION",
+                f"Complexity must be 1-10, got {fields['complexity']}",
+                "complexity",
+            )
     conn = get_connection()
     try:
-        allowed = {"title", "description", "summary", "priority", "complexity",
-                   "item_type", "tags", "metadata", "properties", "due_at", "schedule"}
+        allowed = {
+            "title",
+            "description",
+            "summary",
+            "priority",
+            "complexity",
+            "item_type",
+            "tags",
+            "metadata",
+            "properties",
+            "due_at",
+            "schedule",
+        }
         updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
         if not updates:
             raise ToolError("VALIDATION", "No valid fields to update")
         if "schedule" in updates:
             try:
-                updates["next_run_at"] = croniter(updates["schedule"], datetime.now(timezone.utc)).get_next(datetime).isoformat()
+                updates["next_run_at"] = (
+                    croniter(updates["schedule"], datetime.now(timezone.utc))
+                    .get_next(datetime)
+                    .isoformat()
+                )
             except CroniterBadCronError:
-                raise ToolError("VALIDATION", f"Invalid cron expression: {updates['schedule']}", "schedule")
+                raise ToolError(
+                    "VALIDATION",
+                    f"Invalid cron expression: {updates['schedule']}",
+                    "schedule",
+                )
         updates["updated_at"] = _now()
         set_clause = ", ".join(f"{k}=?" for k in updates)
-        conn.execute(f"UPDATE work_items SET {set_clause} WHERE id=?", (*updates.values(), item_id))
+        conn.execute(
+            f"UPDATE work_items SET {set_clause} WHERE id=?",
+            (*updates.values(), item_id),
+        )
         conn.commit()
         row = conn.execute("SELECT * FROM work_items WHERE id=?", (item_id,)).fetchone()
         if not row:
@@ -206,7 +310,11 @@ def delete_item(item_id: str, recursive: bool = False) -> dict:
                 "SELECT COUNT(*) as cnt FROM work_items WHERE parent_id=?", (item_id,)
             ).fetchone()["cnt"]
             if child_count > 0:
-                raise ToolError("VALIDATION", f"Item has {child_count} children. Use recursive=true to delete them.", "item_id")
+                raise ToolError(
+                    "VALIDATION",
+                    f"Item has {child_count} children. Use recursive=true to delete them.",
+                    "item_id",
+                )
         cur = conn.execute("DELETE FROM work_items WHERE id=?", (item_id,))
         conn.commit()
         result = {"deleted": cur.rowcount > 0}
@@ -238,7 +346,9 @@ def delete_items_batch(ids: list[str], recursive: bool = False) -> dict:
 
 def _delete_descendants(conn, parent_id: str) -> int:
     """Recursively delete all descendants, returns count deleted."""
-    children = conn.execute("SELECT id FROM work_items WHERE parent_id=?", (parent_id,)).fetchall()
+    children = conn.execute(
+        "SELECT id FROM work_items WHERE parent_id=?", (parent_id,)
+    ).fetchall()
     count = 0
     for child in children:
         count += _delete_descendants(conn, child["id"])
@@ -250,15 +360,22 @@ def _delete_descendants(conn, parent_id: str) -> int:
 def get_item(item_id: str) -> dict | None:
     conn = get_connection()
     try:
-        return _row_to_dict(conn.execute("SELECT * FROM work_items WHERE id=?", (item_id,)).fetchone())
+        return _row_to_dict(
+            conn.execute("SELECT * FROM work_items WHERE id=?", (item_id,)).fetchone()
+        )
     finally:
         conn.close()
 
 
-def query_items(status: str | None = None, parent_id: str | None = None,
-                priority: str | None = None, search: str | None = None,
-                tags: str | None = None,
-                limit: int = 50, offset: int = 0) -> list[dict]:
+def query_items(
+    status: str | None = None,
+    parent_id: str | None = None,
+    priority: str | None = None,
+    search: str | None = None,
+    tags: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[dict]:
     conn = get_connection()
     try:
         clauses, params = [], []
@@ -290,7 +407,7 @@ def query_items(status: str | None = None, parent_id: str | None = None,
             # Batch IN clause in chunks of 500 to avoid SQLITE_LIMIT_VARIABLE_NUMBER
             id_clauses = []
             for i in range(0, len(matched_ids), 500):
-                chunk = matched_ids[i:i + 500]
+                chunk = matched_ids[i : i + 500]
                 id_clauses.append(f"id IN ({','.join('?' for _ in chunk)})")
                 params.extend(chunk)
             clauses.append(f"({' OR '.join(id_clauses)})")
@@ -310,7 +427,7 @@ def _fts_search(conn, search: str) -> set[str]:
     try:
         fts_term = search.replace('"', '""')
         rows = conn.execute(
-            'SELECT id FROM items_fts WHERE items_fts MATCH ?',
+            "SELECT id FROM items_fts WHERE items_fts MATCH ?",
             (f'"{fts_term}" OR {fts_term}*',),
         ).fetchall()
         return {r["id"] for r in rows}
@@ -325,7 +442,10 @@ def _fts_search(conn, search: str) -> set[str]:
 def get_children(parent_id: str) -> list[dict]:
     conn = get_connection()
     try:
-        rows = conn.execute("SELECT * FROM work_items WHERE parent_id=? ORDER BY created_at", (parent_id,)).fetchall()
+        rows = conn.execute(
+            "SELECT * FROM work_items WHERE parent_id=? ORDER BY created_at",
+            (parent_id,),
+        ).fetchall()
         return [_row_to_dict(r) for r in rows]
     finally:
         conn.close()
@@ -338,10 +458,14 @@ def get_ancestors(item_id: str) -> list[dict]:
         ancestors = []
         current = item_id
         while current:
-            row = conn.execute("SELECT * FROM work_items WHERE id=?", (current,)).fetchone()
+            row = conn.execute(
+                "SELECT * FROM work_items WHERE id=?", (current,)
+            ).fetchone()
             if not row or not row["parent_id"]:
                 break
-            parent = conn.execute("SELECT * FROM work_items WHERE id=?", (row["parent_id"],)).fetchone()
+            parent = conn.execute(
+                "SELECT * FROM work_items WHERE id=?", (row["parent_id"],)
+            ).fetchone()
             if parent:
                 ancestors.append(_row_to_dict(parent))
                 current = parent["id"]
@@ -356,7 +480,9 @@ def _get_depth(conn, item_id: str) -> int:
     depth = 0
     current = item_id
     while current:
-        row = conn.execute("SELECT parent_id FROM work_items WHERE id=?", (current,)).fetchone()
+        row = conn.execute(
+            "SELECT parent_id FROM work_items WHERE id=?", (current,)
+        ).fetchone()
         if not row or not row["parent_id"]:
             break
         current = row["parent_id"]
@@ -366,9 +492,14 @@ def _get_depth(conn, item_id: str) -> int:
 
 # --- Workflow ---
 
+
 def advance_item(item_id: str, trigger: str) -> dict:
     if trigger not in TRANSITIONS and trigger not in ("resume", "hold"):
-        raise ToolError("VALIDATION", f"Invalid trigger: {trigger}. Valid: {list(TRANSITIONS.keys()) + ['resume', 'hold']}", "trigger")
+        raise ToolError(
+            "VALIDATION",
+            f"Invalid trigger: {trigger}. Valid: {list(TRANSITIONS.keys()) + ['resume', 'hold']}",
+            "trigger",
+        )
     # hold is alias for block
     if trigger == "hold":
         trigger = "block"
@@ -381,16 +512,24 @@ def advance_item(item_id: str, trigger: str) -> dict:
 
         if trigger == "resume":
             if current != "blocked":
-                raise ToolError("CONFLICT", f"Can only resume blocked items, current: {current}", "trigger")
+                raise ToolError(
+                    "CONFLICT",
+                    f"Can only resume blocked items, current: {current}",
+                    "trigger",
+                )
             new_status = row["previous_status"] or "work"
         elif trigger == "block":
             if current in TERMINAL or current == "blocked":
                 raise ToolError("CONFLICT", f"Cannot block from {current}", "trigger")
             new_status = "blocked"
-            conn.execute("UPDATE work_items SET previous_status=? WHERE id=?", (current, item_id))
+            conn.execute(
+                "UPDATE work_items SET previous_status=? WHERE id=?", (current, item_id)
+            )
         else:
             if current not in TRANSITIONS[trigger]:
-                raise ToolError("CONFLICT", f"Cannot {trigger} from {current}", "trigger")
+                raise ToolError(
+                    "CONFLICT", f"Cannot {trigger} from {current}", "trigger"
+                )
             new_status = TRANSITIONS[trigger][current]
 
         # Check dependencies for advancing triggers
@@ -398,45 +537,69 @@ def advance_item(item_id: str, trigger: str) -> dict:
             blockers = _get_unsatisfied_blockers(conn, item_id)
             if blockers:
                 titles = [b["title"] for b in blockers]
-                raise ToolError("DEPENDENCY_UNSATISFIED", f"Blocked by unfinished items: {', '.join(titles)}", "item_id")
+                raise ToolError(
+                    "DEPENDENCY_UNSATISFIED",
+                    f"Blocked by unfinished items: {', '.join(titles)}",
+                    "item_id",
+                )
 
         # Check note schema gates
         if trigger in ("start", "complete"):
             item_dict = _row_to_dict(row)
-            notes = [_row_to_dict(r) for r in conn.execute(
-                "SELECT * FROM notes WHERE item_id=?", (item_id,)).fetchall()]
+            notes = [
+                _row_to_dict(r)
+                for r in conn.execute(
+                    "SELECT * FROM notes WHERE item_id=?", (item_id,)
+                ).fetchall()
+            ]
             gate = check_gate(item_dict, notes, new_status)
             if not gate["can_advance"]:
                 missing_keys = [m["key"] for m in gate["missing"]]
-                raise ToolError("GATE_BLOCKED",
-                                f"Missing required notes: {', '.join(missing_keys)}"
-                                + (f". Hint: {gate['guidance']}" if gate["guidance"] else ""),
-                                "item_id")
+                raise ToolError(
+                    "GATE_BLOCKED",
+                    f"Missing required notes: {', '.join(missing_keys)}"
+                    + (f". Hint: {gate['guidance']}" if gate["guidance"] else ""),
+                    "item_id",
+                )
 
         # Check cancel permission (permanent lifecycle)
         if trigger == "cancel" and not can_cancel(_row_to_dict(row)):
-            raise ToolError("CONFLICT", "Cannot cancel: item has permanent lifecycle", "trigger")
+            raise ToolError(
+                "CONFLICT", "Cannot cancel: item has permanent lifecycle", "trigger"
+            )
 
         # Auto-skip review for 'auto' lifecycle
-        if trigger == "start" and new_status == "review" and should_skip_review(_row_to_dict(row)):
+        if (
+            trigger == "start"
+            and new_status == "review"
+            and should_skip_review(_row_to_dict(row))
+        ):
             new_status = "done"
 
         now = _now()
         status_label = "cancelled" if trigger == "cancel" else None
         conn.execute(
             "UPDATE work_items SET status=?, status_label=?, role_changed_at=?, updated_at=? WHERE id=?",
-            (new_status, status_label, now, now, item_id))
+            (new_status, status_label, now, now, item_id),
+        )
         conn.commit()
 
         # Scheduled item requeue: if completing and item has a schedule, requeue it
         if new_status == "done" and row["schedule"]:
-            new_next_run = croniter(row["schedule"], datetime.now(timezone.utc)).get_next(datetime).isoformat()
+            new_next_run = (
+                croniter(row["schedule"], datetime.now(timezone.utc))
+                .get_next(datetime)
+                .isoformat()
+            )
             conn.execute(
                 "UPDATE work_items SET status='queue', previous_status=NULL, next_run_at=?, updated_at=? WHERE id=?",
-                (new_next_run, now, item_id))
+                (new_next_run, now, item_id),
+            )
             conn.commit()
 
-        result = _row_to_dict(conn.execute("SELECT * FROM work_items WHERE id=?", (item_id,)).fetchone())
+        result = _row_to_dict(
+            conn.execute("SELECT * FROM work_items WHERE id=?", (item_id,)).fetchone()
+        )
 
         # Find items unblocked by this transition
         unblocked = []
@@ -445,11 +608,14 @@ def advance_item(item_id: str, trigger: str) -> dict:
 
         # Reopen cascade: if reopening, cascade parent from terminal to work
         if trigger == "reopen" and row["parent_id"]:
-            parent = conn.execute("SELECT * FROM work_items WHERE id=?", (row["parent_id"],)).fetchone()
+            parent = conn.execute(
+                "SELECT * FROM work_items WHERE id=?", (row["parent_id"],)
+            ).fetchone()
             if parent and parent["status"] in TERMINAL:
                 conn.execute(
                     "UPDATE work_items SET status='work', status_label=NULL, role_changed_at=?, updated_at=? WHERE id=?",
-                    (now, now, parent["id"]))
+                    (now, now, parent["id"]),
+                )
                 conn.commit()
                 result["parent_reopened"] = True
 
@@ -468,17 +634,35 @@ def advance_items_batch(transitions: list[dict]) -> dict:
     for t in transitions:
         try:
             result = advance_item(t["item_id"], t["trigger"])
-            results.append({"item_id": t["item_id"], "trigger": t["trigger"],
-                           "applied": True, "new_status": result["status"]})
+            results.append(
+                {
+                    "item_id": t["item_id"],
+                    "trigger": t["trigger"],
+                    "applied": True,
+                    "new_status": result["status"],
+                }
+            )
             all_unblocked.extend(result.get("unblocked_items", []))
             succeeded += 1
         except (ValueError, ToolError) as e:
-            results.append({"item_id": t["item_id"], "trigger": t["trigger"],
-                           "applied": False, "error": str(e)})
+            results.append(
+                {
+                    "item_id": t["item_id"],
+                    "trigger": t["trigger"],
+                    "applied": False,
+                    "error": str(e),
+                }
+            )
             failed += 1
-    return {"results": results, "summary": {"total": len(transitions),
-            "succeeded": succeeded, "failed": failed},
-            "all_unblocked_items": all_unblocked}
+    return {
+        "results": results,
+        "summary": {
+            "total": len(transitions),
+            "succeeded": succeeded,
+            "failed": failed,
+        },
+        "all_unblocked_items": all_unblocked,
+    }
 
 
 def get_next_status(item_id: str, trigger: str) -> dict:
@@ -493,8 +677,16 @@ def get_next_status(item_id: str, trigger: str) -> dict:
         current = row["status"]
         if trigger == "resume":
             if current != "blocked":
-                return {"can_advance": False, "reason": f"Can only resume blocked items, current: {current}"}
-            return {"can_advance": True, "current": current, "next": row["previous_status"] or "work", "trigger": trigger}
+                return {
+                    "can_advance": False,
+                    "reason": f"Can only resume blocked items, current: {current}",
+                }
+            return {
+                "can_advance": True,
+                "current": current,
+                "next": row["previous_status"] or "work",
+                "trigger": trigger,
+            }
         if current not in TRANSITIONS.get(trigger, {}):
             return {"can_advance": False, "reason": f"Cannot {trigger} from {current}"}
         # Check deps
@@ -502,20 +694,36 @@ def get_next_status(item_id: str, trigger: str) -> dict:
         if trigger in ("start", "complete") and current == "queue":
             blockers = _get_unsatisfied_blockers(conn, item_id)
         if blockers:
-            return {"can_advance": False, "reason": "Blocked by dependencies",
-                    "blockers": [{"id": b["id"], "title": b["title"]} for b in blockers]}
+            return {
+                "can_advance": False,
+                "reason": "Blocked by dependencies",
+                "blockers": [{"id": b["id"], "title": b["title"]} for b in blockers],
+            }
         # Check gates
         if trigger in ("start", "complete"):
             item_dict = _row_to_dict(row)
-            notes = [_row_to_dict(r) for r in conn.execute(
-                "SELECT * FROM notes WHERE item_id=?", (item_id,)).fetchall()]
+            notes = [
+                _row_to_dict(r)
+                for r in conn.execute(
+                    "SELECT * FROM notes WHERE item_id=?", (item_id,)
+                ).fetchall()
+            ]
             gate = check_gate(item_dict, notes, TRANSITIONS[trigger][current])
             if not gate["can_advance"]:
-                return {"can_advance": False, "reason": "Missing required notes",
-                        "missing": gate["missing"], "guidance": gate["guidance"]}
+                return {
+                    "can_advance": False,
+                    "reason": "Missing required notes",
+                    "missing": gate["missing"],
+                    "guidance": gate["guidance"],
+                }
         if trigger == "cancel" and not can_cancel(_row_to_dict(row)):
             return {"can_advance": False, "reason": "Item has permanent lifecycle"}
-        return {"can_advance": True, "current": current, "next": TRANSITIONS[trigger][current], "trigger": trigger}
+        return {
+            "can_advance": True,
+            "current": current,
+            "next": TRANSITIONS[trigger][current],
+            "trigger": trigger,
+        }
     finally:
         conn.close()
 
@@ -523,12 +731,22 @@ def get_next_status(item_id: str, trigger: str) -> dict:
 def _get_unsatisfied_blockers(conn, item_id: str) -> list[dict]:
     """Check blockers respecting unblock_at threshold. Ignores relates_to deps.
     Status order: queue(0) < work(1) < review(2) < done(3). cancelled counts as done."""
-    status_rank = {"queue": 0, "work": 1, "review": 2, "done": 3, "cancelled": 3, "blocked": 0}
-    rows = conn.execute("""
+    status_rank = {
+        "queue": 0,
+        "work": 1,
+        "review": 2,
+        "done": 3,
+        "cancelled": 3,
+        "blocked": 0,
+    }
+    rows = conn.execute(
+        """
         SELECT wi.*, d.unblock_at, d.dep_type FROM dependencies d
         JOIN work_items wi ON wi.id = d.from_id
         WHERE d.to_id = ?
-    """, (item_id,)).fetchall()
+    """,
+        (item_id,),
+    ).fetchall()
     unsatisfied = []
     for r in rows:
         dep_type = r["dep_type"] if "dep_type" in r.keys() else "blocks"
@@ -550,7 +768,9 @@ def _find_newly_unblocked(conn, completed_id: str) -> list[dict]:
     for dep in dependents:
         blockers = _get_unsatisfied_blockers(conn, dep["to_id"])
         if not blockers:
-            row = conn.execute("SELECT * FROM work_items WHERE id=?", (dep["to_id"],)).fetchone()
+            row = conn.execute(
+                "SELECT * FROM work_items WHERE id=?", (dep["to_id"],)
+            ).fetchone()
             if row and row["status"] not in TERMINAL:
                 unblocked.append(_row_to_dict(row))
     return unblocked
@@ -609,7 +829,11 @@ def get_next_item(workspace: str | None = None) -> dict | None:
             overdue = 1
             if x.get("due_at") and x["due_at"] <= now_iso:
                 overdue = 0
-            return (overdue, 0 if x["status"] == "work" else 1, PRIORITY_ORDER.get(x["priority"], 2))
+            return (
+                overdue,
+                0 if x["status"] == "work" else 1,
+                PRIORITY_ORDER.get(x["priority"], 2),
+            )
 
         candidates.sort(key=_sort_key)
         return candidates[0] if candidates else None
@@ -622,10 +846,14 @@ def get_blocked_items(workspace: str | None = None) -> list[dict]:
     try:
         ws_filter, ws_params = _workspace_tag_filter(workspace)
         ws_and = f" AND {ws_filter}" if ws_filter else ""
-        rows = conn.execute(f"SELECT * FROM work_items WHERE status='blocked'{ws_and}", ws_params).fetchall()
+        rows = conn.execute(
+            f"SELECT * FROM work_items WHERE status='blocked'{ws_and}", ws_params
+        ).fetchall()
         result = [_row_to_dict(r) for r in rows]
         # Also find queue items with unsatisfied deps
-        queue_rows = conn.execute(f"SELECT * FROM work_items WHERE status='queue'{ws_and}", ws_params).fetchall()
+        queue_rows = conn.execute(
+            f"SELECT * FROM work_items WHERE status='queue'{ws_and}", ws_params
+        ).fetchall()
         for r in queue_rows:
             blockers = _get_unsatisfied_blockers(conn, r["id"])
             if blockers:
@@ -637,22 +865,40 @@ def get_blocked_items(workspace: str | None = None) -> list[dict]:
         conn.close()
 
 
-def get_context(item_id: str | None = None, include_ancestors: bool = False, workspace: str | None = None) -> dict:
+def get_context(
+    item_id: str | None = None,
+    include_ancestors: bool = False,
+    workspace: str | None = None,
+) -> dict:
     conn = get_connection()
     try:
         if item_id:
-            row = conn.execute("SELECT * FROM work_items WHERE id=?", (item_id,)).fetchone()
+            row = conn.execute(
+                "SELECT * FROM work_items WHERE id=?", (item_id,)
+            ).fetchone()
             if not row:
                 raise ToolError("NOT_FOUND", f"Item {item_id} not found", "item_id")
             item = _row_to_dict(row)
-            children = [_row_to_dict(r) for r in conn.execute(
-                "SELECT * FROM work_items WHERE parent_id=?", (item_id,)).fetchall()]
-            notes = [_row_to_dict(r) for r in conn.execute(
-                "SELECT * FROM notes WHERE item_id=?", (item_id,)).fetchall()]
+            children = [
+                _row_to_dict(r)
+                for r in conn.execute(
+                    "SELECT * FROM work_items WHERE parent_id=?", (item_id,)
+                ).fetchall()
+            ]
+            notes = [
+                _row_to_dict(r)
+                for r in conn.execute(
+                    "SELECT * FROM notes WHERE item_id=?", (item_id,)
+                ).fetchall()
+            ]
             blockers = _get_unsatisfied_blockers(conn, item_id)
-            result = {"item": item, "children": children, "notes": notes,
-                      "blockers": [_row_to_dict(b) for b in blockers],
-                      "can_advance": len(blockers) == 0 and item["status"] not in TERMINAL}
+            result = {
+                "item": item,
+                "children": children,
+                "notes": notes,
+                "blockers": [_row_to_dict(b) for b in blockers],
+                "can_advance": len(blockers) == 0 and item["status"] not in TERMINAL,
+            }
             if include_ancestors:
                 result["ancestors"] = get_ancestors(item_id)
             # Add gate info if schema exists
@@ -672,15 +918,24 @@ def get_context(item_id: str | None = None, include_ancestors: bool = False, wor
 
         counts = {}
         for row in conn.execute(
-            f"SELECT status, COUNT(*) as cnt FROM work_items {ws_where} GROUP BY status", ws_params
+            f"SELECT status, COUNT(*) as cnt FROM work_items {ws_where} GROUP BY status",
+            ws_params,
         ).fetchall():
             counts[row["status"]] = row["cnt"]
-        active = [_row_to_dict(r) for r in conn.execute(
-            f"SELECT * FROM work_items WHERE status IN ('work','review') {ws_and} ORDER BY updated_at DESC LIMIT 10",
-            ws_params).fetchall()]
-        recent = [_row_to_dict(r) for r in conn.execute(
-            f"SELECT * FROM work_items WHERE status IN ('done','cancelled') {ws_and} ORDER BY updated_at DESC LIMIT 5",
-            ws_params).fetchall()]
+        active = [
+            _row_to_dict(r)
+            for r in conn.execute(
+                f"SELECT * FROM work_items WHERE status IN ('work','review') {ws_and} ORDER BY updated_at DESC LIMIT 10",
+                ws_params,
+            ).fetchall()
+        ]
+        recent = [
+            _row_to_dict(r)
+            for r in conn.execute(
+                f"SELECT * FROM work_items WHERE status IN ('done','cancelled') {ws_and} ORDER BY updated_at DESC LIMIT 5",
+                ws_params,
+            ).fetchall()
+        ]
         blocked = get_blocked_items(workspace=workspace)
         next_item = get_next_item(workspace=workspace)
         # Stale item detection
@@ -693,41 +948,64 @@ def get_context(item_id: str | None = None, include_ancestors: bool = False, wor
             item = _row_to_dict(row)
             updated = _parse_dt(item["updated_at"])
             days = (now_dt - updated).days
-            if (item["status"] == "queue" and days > 7) or (item["status"] == "work" and days > 3):
+            if (item["status"] == "queue" and days > 7) or (
+                item["status"] == "work" and days > 3
+            ):
                 item["stale_days"] = days
                 stale_items.append(item)
-        return {"counts": counts, "active": active, "blocked": blocked,
-                "recent_completed": recent, "next_item": next_item,
-                "stale_items": stale_items,
-                "due_soon": _get_items_by_due_date(conn, "due_soon", now_dt),
-                "overdue": _get_items_by_due_date(conn, "overdue", now_dt),
-                "scheduled_upcoming": _get_scheduled_upcoming(conn, now_dt)}
+        return {
+            "counts": counts,
+            "active": active,
+            "blocked": blocked,
+            "recent_completed": recent,
+            "next_item": next_item,
+            "stale_items": stale_items,
+            "due_soon": _get_items_by_due_date(conn, "due_soon", now_dt),
+            "overdue": _get_items_by_due_date(conn, "overdue", now_dt),
+            "scheduled_upcoming": _get_scheduled_upcoming(conn, now_dt),
+        }
     finally:
         conn.close()
 
 
 # --- Notes ---
 
+
 def upsert_note(item_id: str, key: str, body: str, role: str = "queue") -> dict:
     conn = get_connection()
     try:
-        item = conn.execute("SELECT * FROM work_items WHERE id=?", (item_id,)).fetchone()
+        item = conn.execute(
+            "SELECT * FROM work_items WHERE id=?", (item_id,)
+        ).fetchone()
         if not item:
             raise ToolError("NOT_FOUND", f"Item {item_id} not found", "item_id")
         now = _now()
-        existing = conn.execute("SELECT id FROM notes WHERE item_id=? AND key=?", (item_id, key)).fetchone()
+        existing = conn.execute(
+            "SELECT id FROM notes WHERE item_id=? AND key=?", (item_id, key)
+        ).fetchone()
         if existing:
-            conn.execute("UPDATE notes SET body=?, role=?, updated_at=? WHERE id=?",
-                          (body, role, now, existing["id"]))
+            conn.execute(
+                "UPDATE notes SET body=?, role=?, updated_at=? WHERE id=?",
+                (body, role, now, existing["id"]),
+            )
         else:
-            conn.execute("INSERT INTO notes (id,item_id,key,role,body,created_at,updated_at) VALUES (?,?,?,?,?,?,?)",
-                          (_uid(), item_id, key, role, body, now, now))
+            conn.execute(
+                "INSERT INTO notes (id,item_id,key,role,body,created_at,updated_at) VALUES (?,?,?,?,?,?,?)",
+                (_uid(), item_id, key, role, body, now, now),
+            )
         conn.commit()
-        result = _row_to_dict(conn.execute("SELECT * FROM notes WHERE item_id=? AND key=?", (item_id, key)).fetchone())
+        result = _row_to_dict(
+            conn.execute(
+                "SELECT * FROM notes WHERE item_id=? AND key=?", (item_id, key)
+            ).fetchone()
+        )
         # Auto-reopen: if item is terminal and schema has auto-reopen lifecycle
         item_dict = _row_to_dict(item)
         if item_dict["status"] in TERMINAL and should_auto_reopen(item_dict):
-            conn.execute("UPDATE work_items SET status='queue', updated_at=? WHERE id=?", (now, item_id))
+            conn.execute(
+                "UPDATE work_items SET status='queue', updated_at=? WHERE id=?",
+                (now, item_id),
+            )
             conn.commit()
             result["auto_reopened"] = True
         return result
@@ -738,7 +1016,9 @@ def upsert_note(item_id: str, key: str, body: str, role: str = "queue") -> dict:
 def delete_note(item_id: str, key: str) -> bool:
     conn = get_connection()
     try:
-        cur = conn.execute("DELETE FROM notes WHERE item_id=? AND key=?", (item_id, key))
+        cur = conn.execute(
+            "DELETE FROM notes WHERE item_id=? AND key=?", (item_id, key)
+        )
         conn.commit()
         return cur.rowcount > 0
     finally:
@@ -749,7 +1029,9 @@ def get_notes(item_id: str, include_body: bool = True) -> list[dict]:
     conn = get_connection()
     try:
         if include_body:
-            rows = conn.execute("SELECT * FROM notes WHERE item_id=? ORDER BY created_at", (item_id,)).fetchall()
+            rows = conn.execute(
+                "SELECT * FROM notes WHERE item_id=? ORDER BY created_at", (item_id,)
+            ).fetchall()
         else:
             rows = conn.execute(
                 "SELECT id, item_id, key, role, created_at, updated_at FROM notes WHERE item_id=? ORDER BY created_at",
@@ -762,8 +1044,10 @@ def get_notes(item_id: str, include_body: bool = True) -> list[dict]:
 
 # --- Dependencies ---
 
-def add_dependency(from_id: str, to_id: str, dep_type: str = "blocks",
-                   unblock_at: str = "done") -> dict:
+
+def add_dependency(
+    from_id: str, to_id: str, dep_type: str = "blocks", unblock_at: str = "done"
+) -> dict:
     """Add dependency. dep_type: blocks, is_blocked_by, relates_to.
     unblock_at: status at which the blocker unblocks (default: done).
     Valid: done, review, work. RELATES_TO deps cannot have unblock_at."""
@@ -772,12 +1056,24 @@ def add_dependency(from_id: str, to_id: str, dep_type: str = "blocks",
     valid_types = {"blocks", "is_blocked_by", "relates_to"}
     dep_type = dep_type.lower().replace("-", "_")
     if dep_type not in valid_types:
-        raise ToolError("VALIDATION", f"Invalid dep_type: {dep_type}. Valid: {sorted(valid_types)}", "dep_type")
+        raise ToolError(
+            "VALIDATION",
+            f"Invalid dep_type: {dep_type}. Valid: {sorted(valid_types)}",
+            "dep_type",
+        )
     if dep_type == "relates_to" and unblock_at != "done":
-        raise ToolError("VALIDATION", "RELATES_TO dependencies cannot have unblock_at threshold", "unblock_at")
+        raise ToolError(
+            "VALIDATION",
+            "RELATES_TO dependencies cannot have unblock_at threshold",
+            "unblock_at",
+        )
     valid_unblock = {"done", "review", "work"}
     if unblock_at not in valid_unblock:
-        raise ToolError("VALIDATION", f"Invalid unblock_at: {unblock_at}. Valid: {sorted(valid_unblock)}", "unblock_at")
+        raise ToolError(
+            "VALIDATION",
+            f"Invalid unblock_at: {unblock_at}. Valid: {sorted(valid_unblock)}",
+            "unblock_at",
+        )
     # IS_BLOCKED_BY is stored as BLOCKS with swapped direction
     if dep_type == "is_blocked_by":
         from_id, to_id = to_id, from_id
@@ -785,19 +1081,27 @@ def add_dependency(from_id: str, to_id: str, dep_type: str = "blocks",
     conn = get_connection()
     try:
         for fid in (from_id, to_id):
-            if not conn.execute("SELECT id FROM work_items WHERE id=?", (fid,)).fetchone():
+            if not conn.execute(
+                "SELECT id FROM work_items WHERE id=?", (fid,)
+            ).fetchone():
                 raise ToolError("NOT_FOUND", f"Item {fid} not found", "from_id")
         if dep_type != "relates_to" and _would_create_cycle(conn, from_id, to_id):
             raise ToolError("CONFLICT", "Dependency would create a cycle", "from_id")
         dep_id = _uid()
         now = _now()
         try:
-            conn.execute("INSERT INTO dependencies (id,from_id,to_id,dep_type,unblock_at,created_at) VALUES (?,?,?,?,?,?)",
-                          (dep_id, from_id, to_id, dep_type, unblock_at, now))
+            conn.execute(
+                "INSERT INTO dependencies (id,from_id,to_id,dep_type,unblock_at,created_at) VALUES (?,?,?,?,?,?)",
+                (dep_id, from_id, to_id, dep_type, unblock_at, now),
+            )
             conn.commit()
         except sqlite3.IntegrityError:
-            raise ToolError("CONFLICT", f"Dependency {from_id} → {to_id} already exists", "from_id")
-        return _row_to_dict(conn.execute("SELECT * FROM dependencies WHERE id=?", (dep_id,)).fetchone())
+            raise ToolError(
+                "CONFLICT", f"Dependency {from_id} → {to_id} already exists", "from_id"
+            )
+        return _row_to_dict(
+            conn.execute("SELECT * FROM dependencies WHERE id=?", (dep_id,)).fetchone()
+        )
     finally:
         conn.close()
 
@@ -805,7 +1109,9 @@ def add_dependency(from_id: str, to_id: str, dep_type: str = "blocks",
 def add_dependency_pattern(item_ids: list[str], pattern: str = "linear") -> list[dict]:
     """Create dependencies using pattern shortcuts: linear, fan-out, fan-in."""
     if len(item_ids) < 2:
-        raise ToolError("VALIDATION", "Need at least 2 items for a dependency pattern", "item_ids")
+        raise ToolError(
+            "VALIDATION", "Need at least 2 items for a dependency pattern", "item_ids"
+        )
     results = []
     if pattern == "linear":
         for i in range(len(item_ids) - 1):
@@ -819,14 +1125,20 @@ def add_dependency_pattern(item_ids: list[str], pattern: str = "linear") -> list
         for source in item_ids[:-1]:
             results.append(add_dependency(source, target))
     else:
-        raise ToolError("VALIDATION", f"Invalid pattern: {pattern}. Valid: linear, fan-out, fan-in", "pattern")
+        raise ToolError(
+            "VALIDATION",
+            f"Invalid pattern: {pattern}. Valid: linear, fan-out, fan-in",
+            "pattern",
+        )
     return results
 
 
 def remove_dependency(from_id: str, to_id: str) -> bool:
     conn = get_connection()
     try:
-        cur = conn.execute("DELETE FROM dependencies WHERE from_id=? AND to_id=?", (from_id, to_id))
+        cur = conn.execute(
+            "DELETE FROM dependencies WHERE from_id=? AND to_id=?", (from_id, to_id)
+        )
         conn.commit()
         return cur.rowcount > 0
     finally:
@@ -839,23 +1151,31 @@ def get_dependencies(item_id: str, direction: str = "both") -> dict:
         blocks = []
         blocked_by = []
         if direction in ("outbound", "both"):
-            rows = conn.execute("""
+            rows = conn.execute(
+                """
                 SELECT d.*, wi.title as to_title, wi.status as to_status
                 FROM dependencies d JOIN work_items wi ON wi.id=d.to_id WHERE d.from_id=?
-            """, (item_id,)).fetchall()
+            """,
+                (item_id,),
+            ).fetchall()
             blocks = [_row_to_dict(r) for r in rows]
         if direction in ("inbound", "both"):
-            rows = conn.execute("""
+            rows = conn.execute(
+                """
                 SELECT d.*, wi.title as from_title, wi.status as from_status
                 FROM dependencies d JOIN work_items wi ON wi.id=d.from_id WHERE d.to_id=?
-            """, (item_id,)).fetchall()
+            """,
+                (item_id,),
+            ).fetchall()
             blocked_by = [_row_to_dict(r) for r in rows]
         return {"blocks": blocks, "blocked_by": blocked_by}
     finally:
         conn.close()
 
 
-def query_dependencies_bfs(item_id: str, direction: str = "outbound", max_depth: int = 10) -> list[dict]:
+def query_dependencies_bfs(
+    item_id: str, direction: str = "outbound", max_depth: int = 10
+) -> list[dict]:
     """BFS traversal of dependency graph."""
     conn = get_connection()
     try:
@@ -868,20 +1188,26 @@ def query_dependencies_bfs(item_id: str, direction: str = "outbound", max_depth:
                 continue
             visited.add(current)
             if direction == "outbound":
-                rows = conn.execute("""
+                rows = conn.execute(
+                    """
                     SELECT d.*, wi.title, wi.status, wi.priority
                     FROM dependencies d JOIN work_items wi ON wi.id=d.to_id WHERE d.from_id=?
-                """, (current,)).fetchall()
+                """,
+                    (current,),
+                ).fetchall()
                 for r in rows:
                     item = _row_to_dict(r)
                     item["depth"] = depth + 1
                     result.append(item)
                     queue.append((r["to_id"], depth + 1))
             else:
-                rows = conn.execute("""
+                rows = conn.execute(
+                    """
                     SELECT d.*, wi.title, wi.status, wi.priority
                     FROM dependencies d JOIN work_items wi ON wi.id=d.from_id WHERE d.to_id=?
-                """, (current,)).fetchall()
+                """,
+                    (current,),
+                ).fetchall()
                 for r in rows:
                     item = _row_to_dict(r)
                     item["depth"] = depth + 1
@@ -902,20 +1228,26 @@ def _would_create_cycle(conn, from_id: str, to_id: str) -> bool:
         if current in visited:
             continue
         visited.add(current)
-        rows = conn.execute("SELECT to_id FROM dependencies WHERE from_id=?", (current,)).fetchall()
+        rows = conn.execute(
+            "SELECT to_id FROM dependencies WHERE from_id=?", (current,)
+        ).fetchall()
         queue.extend(r["to_id"] for r in rows)
     return False
 
 
 # --- Bulk ---
 
-def create_work_tree(root: dict, children: list[dict] | None = None,
-                     deps: list[dict] | None = None,
-                     create_notes: bool = False) -> dict:
+
+def create_work_tree(
+    root: dict,
+    children: list[dict] | None = None,
+    deps: list[dict] | None = None,
+    create_notes: bool = False,
+) -> dict:
     root_item = create_item(**root)
     ref_map = {"root": root_item["id"]}
     created = [root_item]
-    for child in (children or []):
+    for child in children or []:
         ref = child.pop("ref", None)
         child["parent_id"] = root_item["id"]
         item = create_item(**child)
@@ -923,24 +1255,44 @@ def create_work_tree(root: dict, children: list[dict] | None = None,
             ref_map[ref] = item["id"]
         created.append(item)
     dep_results = []
-    for dep in (deps or []):
+    for dep in deps or []:
         fid = ref_map.get(dep["from"], dep["from"])
         tid = ref_map.get(dep["to"], dep["to"])
-        dep_results.append(add_dependency(fid, tid,
-                                          dep_type=dep.get("type", "blocks"),
-                                          unblock_at=dep.get("unblock_at", "done")))
+        dep_results.append(
+            add_dependency(
+                fid,
+                tid,
+                dep_type=dep.get("type", "blocks"),
+                unblock_at=dep.get("unblock_at", "done"),
+            )
+        )
     # Auto-create blank notes from schemas
     notes_created = []
     if create_notes:
         for item in created:
-            schema = get_schema_for_item(item.get("item_type", ""), item.get("tags", ""))
+            schema = get_schema_for_item(
+                item.get("item_type", ""), item.get("tags", "")
+            )
             if schema:
                 for note_def in schema["notes"]:
-                    note = upsert_note(item["id"], note_def["key"], "", note_def["role"])
-                    notes_created.append({"item_id": item["id"], "key": note_def["key"],
-                                         "role": note_def["role"], "id": note["id"]})
-    return {"root": root_item, "children": created[1:], "dependencies": dep_results,
-            "ref_map": ref_map, "notes": notes_created}
+                    note = upsert_note(
+                        item["id"], note_def["key"], "", note_def["role"]
+                    )
+                    notes_created.append(
+                        {
+                            "item_id": item["id"],
+                            "key": note_def["key"],
+                            "role": note_def["role"],
+                            "id": note["id"],
+                        }
+                    )
+    return {
+        "root": root_item,
+        "children": created[1:],
+        "dependencies": dep_results,
+        "ref_map": ref_map,
+        "notes": notes_created,
+    }
 
 
 def complete_tree(parent_id: str) -> dict:
@@ -950,7 +1302,9 @@ def complete_tree(parent_id: str) -> dict:
         # Get all descendants
         def _get_all_descendants(pid):
             items = []
-            rows = conn.execute("SELECT * FROM work_items WHERE parent_id=?", (pid,)).fetchall()
+            rows = conn.execute(
+                "SELECT * FROM work_items WHERE parent_id=?", (pid,)
+            ).fetchall()
             for r in rows:
                 items.append(_row_to_dict(r))
                 items.extend(_get_all_descendants(r["id"]))
@@ -961,19 +1315,30 @@ def complete_tree(parent_id: str) -> dict:
         skipped = []
         for item in descendants:
             if item["status"] in TERMINAL:
-                skipped.append({"id": item["id"], "title": item["title"], "status": item["status"]})
+                skipped.append(
+                    {"id": item["id"], "title": item["title"], "status": item["status"]}
+                )
                 continue
             try:
                 result = advance_item(item["id"], "complete")
-                completed.append({"id": item["id"], "title": item["title"], "new_status": result["status"]})
+                completed.append(
+                    {
+                        "id": item["id"],
+                        "title": item["title"],
+                        "new_status": result["status"],
+                    }
+                )
             except ValueError as e:
-                skipped.append({"id": item["id"], "title": item["title"], "reason": str(e)})
+                skipped.append(
+                    {"id": item["id"], "title": item["title"], "reason": str(e)}
+                )
         return {"completed": completed, "skipped": skipped}
     finally:
         conn.close()
 
 
 # --- Metrics ---
+
 
 def get_metrics(days: int = 30, workspace: str | None = None) -> dict:
     """Work metrics: throughput, lead time, WIP, stale ratio, breakdowns."""
@@ -1006,7 +1371,9 @@ def get_metrics(days: int = 30, workspace: str | None = None) -> dict:
         ).fetchall()
         if lt_rows:
             total_secs = sum(
-                (_parse_dt(r["updated_at"]) - _parse_dt(r["created_at"])).total_seconds()
+                (
+                    _parse_dt(r["updated_at"]) - _parse_dt(r["created_at"])
+                ).total_seconds()
                 for r in lt_rows
             )
             lead_time_avg = total_secs / len(lt_rows)
@@ -1014,7 +1381,10 @@ def get_metrics(days: int = 30, workspace: str | None = None) -> dict:
             lead_time_avg = 0.0
 
         # WIP
-        wip = conn.execute(f"SELECT COUNT(*) as cnt FROM work_items WHERE status='work' {ws_and}", ws_params).fetchone()["cnt"]
+        wip = conn.execute(
+            f"SELECT COUNT(*) as cnt FROM work_items WHERE status='work' {ws_and}",
+            ws_params,
+        ).fetchone()["cnt"]
 
         # Stale ratio
         non_terminal = conn.execute(
@@ -1050,7 +1420,9 @@ def get_metrics(days: int = 30, workspace: str | None = None) -> dict:
 
         # Total items
         ws_where = f"WHERE {ws_clause}" if ws_clause else ""
-        total = conn.execute(f"SELECT COUNT(*) as cnt FROM work_items {ws_where}", ws_params).fetchone()["cnt"]
+        total = conn.execute(
+            f"SELECT COUNT(*) as cnt FROM work_items {ws_where}", ws_params
+        ).fetchone()["cnt"]
 
         return {
             "throughput_per_week": throughput,
@@ -1068,13 +1440,21 @@ def get_metrics(days: int = 30, workspace: str | None = None) -> dict:
 
 # --- Export / Import ---
 
+
 def export_graph() -> dict:
     """Export all items, notes, and dependencies as a JSON-serializable dict."""
     conn = get_connection()
     try:
-        items = [_row_to_dict(r) for r in conn.execute("SELECT * FROM work_items").fetchall()]
-        notes = [_row_to_dict(r) for r in conn.execute("SELECT * FROM notes").fetchall()]
-        deps = [_row_to_dict(r) for r in conn.execute("SELECT * FROM dependencies").fetchall()]
+        items = [
+            _row_to_dict(r) for r in conn.execute("SELECT * FROM work_items").fetchall()
+        ]
+        notes = [
+            _row_to_dict(r) for r in conn.execute("SELECT * FROM notes").fetchall()
+        ]
+        deps = [
+            _row_to_dict(r)
+            for r in conn.execute("SELECT * FROM dependencies").fetchall()
+        ]
         return {
             "items": items,
             "notes": notes,
@@ -1117,7 +1497,9 @@ def import_graph(data: dict, mode: str = "merge") -> dict:
     mode='replace': delete everything first, then insert all.
     """
     if mode not in ("merge", "replace"):
-        raise ToolError("VALIDATION", f"Invalid mode: {mode}. Valid: merge, replace", "mode")
+        raise ToolError(
+            "VALIDATION", f"Invalid mode: {mode}. Valid: merge, replace", "mode"
+        )
     conn = get_connection()
     try:
         if mode == "replace":
@@ -1132,9 +1514,13 @@ def import_graph(data: dict, mode: str = "merge") -> dict:
         _insert_rows(conn, "dependencies", data.get("dependencies", []))
         conn.commit()
         counts = {
-            "items": conn.execute("SELECT COUNT(*) as c FROM work_items").fetchone()["c"],
+            "items": conn.execute("SELECT COUNT(*) as c FROM work_items").fetchone()[
+                "c"
+            ],
             "notes": conn.execute("SELECT COUNT(*) as c FROM notes").fetchone()["c"],
-            "dependencies": conn.execute("SELECT COUNT(*) as c FROM dependencies").fetchone()["c"],
+            "dependencies": conn.execute(
+                "SELECT COUNT(*) as c FROM dependencies"
+            ).fetchone()["c"],
         }
         return {"imported": True, "mode": mode, "counts": counts}
     finally:

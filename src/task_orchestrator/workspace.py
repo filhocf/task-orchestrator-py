@@ -40,7 +40,9 @@ def list_workspaces() -> dict:
     return _load()
 
 
-def create_workspace(name: str, tags: list[str], memory_tags: list[str] | None = None) -> dict:
+def create_workspace(
+    name: str, tags: list[str], memory_tags: list[str] | None = None
+) -> dict:
     data = _load()
     if name in data:
         raise ValueError(f"Workspace '{name}' already exists")
@@ -49,7 +51,9 @@ def create_workspace(name: str, tags: list[str], memory_tags: list[str] | None =
     return {name: data[name]}
 
 
-def update_workspace(name: str, tags: list[str] | None = None, memory_tags: list[str] | None = None) -> dict:
+def update_workspace(
+    name: str, tags: list[str] | None = None, memory_tags: list[str] | None = None
+) -> dict:
     data = _load()
     if name not in data:
         raise ValueError(f"Workspace '{name}' not found")
