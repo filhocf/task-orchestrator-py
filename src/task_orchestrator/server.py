@@ -36,12 +36,24 @@ def _resolve(id_str: str) -> str:
 
 
 @mcp.tool()
-def manage_items(operation: str, title: str = "", item_id: str = "", description: str = "",
-                 summary: str = "", parent_id: str = "", priority: str = "medium",
-                 complexity: int | None = None, item_type: str = "", tags: str = "",
-                 metadata: str = "", properties: str = "",
-                 due_at: str = "",
-                 items_json: str = "", ids_json: str = "", recursive: bool = False) -> str:
+def manage_items(
+    operation: str,
+    title: str = "",
+    item_id: str = "",
+    description: str = "",
+    summary: str = "",
+    parent_id: str = "",
+    priority: str = "medium",
+    complexity: int | None = None,
+    item_type: str = "",
+    tags: str = "",
+    metadata: str = "",
+    properties: str = "",
+    due_at: str = "",
+    items_json: str = "",
+    ids_json: str = "",
+    recursive: bool = False,
+) -> str:
     """Create, update, or delete work items. Supports batch operations.
 
     Operations: create, update, delete.
@@ -57,13 +69,24 @@ def manage_items(operation: str, title: str = "", item_id: str = "", description
         if operation == "create":
             if items_json:
                 items = json.loads(items_json)
-                return _json(engine.create_items_batch(items, parent_id=parent_id or None))
-            return _json(engine.create_item(
-                title=title, description=description, summary=summary,
-                parent_id=parent_id or None, priority=priority,
-                complexity=complexity, item_type=item_type, tags=tags,
-                metadata=metadata or None, properties=properties or None,
-                due_at=due_at or None))
+                return _json(
+                    engine.create_items_batch(items, parent_id=parent_id or None)
+                )
+            return _json(
+                engine.create_item(
+                    title=title,
+                    description=description,
+                    summary=summary,
+                    parent_id=parent_id or None,
+                    priority=priority,
+                    complexity=complexity,
+                    item_type=item_type,
+                    tags=tags,
+                    metadata=metadata or None,
+                    properties=properties or None,
+                    due_at=due_at or None,
+                )
+            )
         elif operation == "update":
             kwargs = {}
             if title:
@@ -92,16 +115,26 @@ def manage_items(operation: str, title: str = "", item_id: str = "", description
                 ids = json.loads(ids_json)
                 return _json(engine.delete_items_batch(ids, recursive=recursive))
             return _json(engine.delete_item(item_id, recursive=recursive))
-        return _json({"error": f"Invalid operation: {operation}. Use: create, update, delete"})
+        return _json(
+            {"error": f"Invalid operation: {operation}. Use: create, update, delete"}
+        )
     except Exception as e:
         return _err(e)
 
 
 @mcp.tool()
-def query_items(operation: str = "list", item_id: str = "", status: str = "",
-                parent_id: str = "", priority: str = "", search: str = "",
-                tags: str = "",
-                include_ancestors: bool = False, limit: int = 50, offset: int = 0) -> str:
+def query_items(
+    operation: str = "list",
+    item_id: str = "",
+    status: str = "",
+    parent_id: str = "",
+    priority: str = "",
+    search: str = "",
+    tags: str = "",
+    include_ancestors: bool = False,
+    limit: int = 50,
+    offset: int = 0,
+) -> str:
     """Query work items. Operations: get (by id), list (with filters), children (of parent), overview (status counts).
 
     Filters: status (queue/work/review/done/blocked/cancelled), priority, parent_id, search text, tags (comma-separated).
@@ -121,17 +154,32 @@ def query_items(operation: str = "list", item_id: str = "", status: str = "",
             return _json(engine.get_children(parent_id or item_id))
         elif operation == "overview":
             ctx = engine.get_context()
-            return _json({"counts": ctx["counts"], "active_count": len(ctx["active"]),
-                          "blocked_count": len(ctx["blocked"])})
-        return _json(engine.query_items(status=status or None, parent_id=parent_id or None,
-                                        priority=priority or None, search=search or None,
-                                        tags=tags or None, limit=limit, offset=offset))
+            return _json(
+                {
+                    "counts": ctx["counts"],
+                    "active_count": len(ctx["active"]),
+                    "blocked_count": len(ctx["blocked"]),
+                }
+            )
+        return _json(
+            engine.query_items(
+                status=status or None,
+                parent_id=parent_id or None,
+                priority=priority or None,
+                search=search or None,
+                tags=tags or None,
+                limit=limit,
+                offset=offset,
+            )
+        )
     except Exception as e:
         return _err(e)
 
 
 @mcp.tool()
-def advance_item(item_id: str = "", trigger: str = "", transitions_json: str = "") -> str:
+def advance_item(
+    item_id: str = "", trigger: str = "", transitions_json: str = ""
+) -> str:
     """Advance work items through workflow using triggers. Supports batch transitions.
 
     Triggers: start (next phase), complete (jump to done), block/hold (pause), resume (unblock),
@@ -175,7 +223,9 @@ def get_next_item(workspace: str = "") -> str:
 
 
 @mcp.tool()
-def get_context(item_id: str = "", include_ancestors: bool = False, workspace: str = "") -> str:
+def get_context(
+    item_id: str = "", include_ancestors: bool = False, workspace: str = ""
+) -> str:
     """Get context snapshot for session resume or item inspection.
 
     Without item_id: global dashboard — status counts, active items, blocked items, next action.
@@ -185,8 +235,13 @@ def get_context(item_id: str = "", include_ancestors: bool = False, workspace: s
     Call this at session start to understand current work state.
     """
     try:
-        return _json(engine.get_context(_resolve(item_id) or None, include_ancestors=include_ancestors,
-                                        workspace=workspace or None))
+        return _json(
+            engine.get_context(
+                _resolve(item_id) or None,
+                include_ancestors=include_ancestors,
+                workspace=workspace or None,
+            )
+        )
     except Exception as e:
         return _err(e)
 
@@ -201,7 +256,9 @@ def get_blocked_items() -> str:
 
 
 @mcp.tool()
-def manage_notes(operation: str, item_id: str, key: str = "", body: str = "", role: str = "queue") -> str:
+def manage_notes(
+    operation: str, item_id: str, key: str = "", body: str = "", role: str = "queue"
+) -> str:
     """Manage notes on work items. Notes are persistent documentation per phase.
 
     Operations: upsert (create/update by key), delete, list (all notes for item).
@@ -216,7 +273,9 @@ def manage_notes(operation: str, item_id: str, key: str = "", body: str = "", ro
             return _json({"deleted": engine.delete_note(item_id, key)})
         elif operation == "list":
             return _json(engine.get_notes(item_id))
-        return _json({"error": f"Invalid operation: {operation}. Use: upsert, delete, list"})
+        return _json(
+            {"error": f"Invalid operation: {operation}. Use: upsert, delete, list"}
+        )
     except Exception as e:
         return _err(e)
 
@@ -231,10 +290,17 @@ def query_notes(item_id: str, key: str = "", include_body: bool = True) -> str:
         item_id = _resolve(item_id)
         if key:
             from .db import get_connection
+
             conn = get_connection()
             try:
-                row = conn.execute("SELECT * FROM notes WHERE item_id=? AND key=?", (item_id, key)).fetchone()
-                return _json(dict(row) if row else {"error": f"Note '{key}' not found on item {item_id}"})
+                row = conn.execute(
+                    "SELECT * FROM notes WHERE item_id=? AND key=?", (item_id, key)
+                ).fetchone()
+                return _json(
+                    dict(row)
+                    if row
+                    else {"error": f"Note '{key}' not found on item {item_id}"}
+                )
             finally:
                 conn.close()
         return _json(engine.get_notes(item_id, include_body=include_body))
@@ -243,10 +309,16 @@ def query_notes(item_id: str, key: str = "", include_body: bool = True) -> str:
 
 
 @mcp.tool()
-def manage_dependencies(operation: str, from_id: str = "", to_id: str = "",
-                        item_id: str = "", direction: str = "both",
-                        item_ids: str = "", pattern: str = "linear",
-                        unblock_at: str = "done") -> str:
+def manage_dependencies(
+    operation: str,
+    from_id: str = "",
+    to_id: str = "",
+    item_id: str = "",
+    direction: str = "both",
+    item_ids: str = "",
+    pattern: str = "linear",
+    unblock_at: str = "done",
+) -> str:
     """Manage dependency edges between work items.
 
     Operations: add (from_id blocks to_id), remove, query (get deps for item_id), pattern.
@@ -269,14 +341,22 @@ def manage_dependencies(operation: str, from_id: str = "", to_id: str = "",
         elif operation == "pattern":
             ids = [_resolve(i.strip()) for i in item_ids.split(",") if i.strip()]
             return _json(engine.add_dependency_pattern(ids, pattern))
-        return _json({"error": f"Invalid operation: {operation}. Use: add, remove, query, pattern"})
+        return _json(
+            {
+                "error": f"Invalid operation: {operation}. Use: add, remove, query, pattern"
+            }
+        )
     except Exception as e:
         return _err(e)
 
 
 @mcp.tool()
-def query_dependencies(item_id: str, direction: str = "outbound",
-                       neighbors_only: bool = True, max_depth: int = 10) -> str:
+def query_dependencies(
+    item_id: str,
+    direction: str = "outbound",
+    neighbors_only: bool = True,
+    max_depth: int = 10,
+) -> str:
     """Query dependencies with optional BFS traversal.
 
     neighbors_only=true: direct edges only (fast). false: full BFS graph traversal.
@@ -292,9 +372,14 @@ def query_dependencies(item_id: str, direction: str = "outbound",
 
 
 @mcp.tool()
-def create_work_tree(root_title: str, root_description: str = "", root_priority: str = "medium",
-                     children_json: str = "[]", deps_json: str = "[]",
-                     create_notes: bool = False) -> str:
+def create_work_tree(
+    root_title: str,
+    root_description: str = "",
+    root_priority: str = "medium",
+    children_json: str = "[]",
+    deps_json: str = "[]",
+    create_notes: bool = False,
+) -> str:
     """Atomically create a root item + children + dependencies in one call.
 
     children_json: JSON array of {ref, title, description, priority} objects.
@@ -303,12 +388,24 @@ def create_work_tree(root_title: str, root_description: str = "", root_priority:
     Example: children=[{"ref":"a","title":"Schema"},{"ref":"b","title":"API"}], deps=[{"from":"a","to":"b"}]
     """
     try:
-        children = json.loads(children_json) if isinstance(children_json, str) else children_json
+        children = (
+            json.loads(children_json)
+            if isinstance(children_json, str)
+            else children_json
+        )
         deps = json.loads(deps_json) if isinstance(deps_json, str) else deps_json
-        return _json(engine.create_work_tree(
-            root={"title": root_title, "description": root_description, "priority": root_priority},
-            children=children, deps=deps, create_notes=create_notes,
-        ))
+        return _json(
+            engine.create_work_tree(
+                root={
+                    "title": root_title,
+                    "description": root_description,
+                    "priority": root_priority,
+                },
+                children=children,
+                deps=deps,
+                create_notes=create_notes,
+            )
+        )
     except Exception as e:
         return _err(e)
 
@@ -326,7 +423,9 @@ def complete_tree(parent_id: str) -> str:
 
 
 @mcp.tool()
-def manage_schemas(operation: str = "list", schema_name: str = "", item_id: str = "") -> str:
+def manage_schemas(
+    operation: str = "list", schema_name: str = "", item_id: str = ""
+) -> str:
     """View note schemas and check gate status for items.
 
     Operations:
@@ -342,35 +441,62 @@ def manage_schemas(operation: str = "list", schema_name: str = "", item_id: str 
         elif operation == "get":
             schemas = get_schemas()
             if schema_name not in schemas:
-                return _json({"error": f"Schema '{schema_name}' not found", "available": list(schemas.keys())})
+                return _json(
+                    {
+                        "error": f"Schema '{schema_name}' not found",
+                        "available": list(schemas.keys()),
+                    }
+                )
             return _json(schemas[schema_name])
         elif operation == "check":
             item = engine.get_item(item_id)
             if not item:
                 return _json({"error": f"Item {item_id} not found"})
-            schema = get_schema_for_item(item.get("item_type", ""), item.get("tags", ""))
+            schema = get_schema_for_item(
+                item.get("item_type", ""), item.get("tags", "")
+            )
             if not schema:
                 return _json({"has_schema": False, "can_advance": True})
             from .db import get_connection
+
             conn = get_connection()
             try:
-                notes = [dict(r) for r in conn.execute(
-                    "SELECT * FROM notes WHERE item_id=?", (item_id,)).fetchall()]
+                notes = [
+                    dict(r)
+                    for r in conn.execute(
+                        "SELECT * FROM notes WHERE item_id=?", (item_id,)
+                    ).fetchall()
+                ]
             finally:
                 conn.close()
             from .schemas import check_gate
+
             # Check gate for next natural transition
             next_status = engine.TRANSITIONS.get("start", {}).get(item["status"])
             if not next_status:
-                return _json({"has_schema": True, "schema": schema["name"],
-                              "status": item["status"], "can_advance": item["status"] in engine.TERMINAL})
+                return _json(
+                    {
+                        "has_schema": True,
+                        "schema": schema["name"],
+                        "status": item["status"],
+                        "can_advance": item["status"] in engine.TERMINAL,
+                    }
+                )
             gate = check_gate(item, notes, next_status)
-            return _json({"has_schema": True, "schema": schema["name"], "lifecycle": schema["lifecycle"],
-                          **gate})
+            return _json(
+                {
+                    "has_schema": True,
+                    "schema": schema["name"],
+                    "lifecycle": schema["lifecycle"],
+                    **gate,
+                }
+            )
         elif operation == "reload":
             result = load_schemas()
             return _json({"reloaded": True, "schemas": list(result.keys())})
-        return _json({"error": f"Invalid operation: {operation}. Use: list, get, check, reload"})
+        return _json(
+            {"error": f"Invalid operation: {operation}. Use: list, get, check, reload"}
+        )
     except Exception as e:
         return _err(e)
 
@@ -415,6 +541,7 @@ def import_graph(data_json: str, mode: str = "merge") -> str:
     except Exception as e:
         return _err(e)
 
+
 @mcp.tool()
 def get_workspace_context(workspace: str, verbosity: str = "standard") -> str:
     """Get structured context payload for subagents, scoped to a workspace.
@@ -429,7 +556,6 @@ def get_workspace_context(workspace: str, verbosity: str = "standard") -> str:
         return _json(engine.get_workspace_context(workspace, verbosity=verbosity))
     except Exception as e:
         return _err(e)
-
 
 
 @mcp.tool()
@@ -457,27 +583,53 @@ def manage_workspaces(
             return _json(workspace.list_workspaces())
         elif operation == "create":
             tag_list = [t.strip() for t in tags.split(",") if t.strip()]
-            mem_list = [t.strip() for t in memory_tags.split(",") if t.strip()] if memory_tags else []
-            repo_list = [r.strip() for r in repos.split(",") if r.strip()] if repos else None
-            return _json(workspace.create_workspace(
-                name, tag_list, mem_list,
-                repos=repo_list,
-                conventions=conventions or None,
-                description=description or None,
-            ))
+            mem_list = (
+                [t.strip() for t in memory_tags.split(",") if t.strip()]
+                if memory_tags
+                else []
+            )
+            repo_list = (
+                [r.strip() for r in repos.split(",") if r.strip()] if repos else None
+            )
+            return _json(
+                workspace.create_workspace(
+                    name,
+                    tag_list,
+                    mem_list,
+                    repos=repo_list,
+                    conventions=conventions or None,
+                    description=description or None,
+                )
+            )
         elif operation == "update":
-            tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
-            mem_list = [t.strip() for t in memory_tags.split(",") if t.strip()] if memory_tags else None
-            repo_list = [r.strip() for r in repos.split(",") if r.strip()] if repos else None
-            return _json(workspace.update_workspace(
-                name, tag_list, mem_list,
-                repos=repo_list,
-                conventions=conventions or None,
-                description=description or None,
-            ))
+            tag_list = (
+                [t.strip() for t in tags.split(",") if t.strip()] if tags else None
+            )
+            mem_list = (
+                [t.strip() for t in memory_tags.split(",") if t.strip()]
+                if memory_tags
+                else None
+            )
+            repo_list = (
+                [r.strip() for r in repos.split(",") if r.strip()] if repos else None
+            )
+            return _json(
+                workspace.update_workspace(
+                    name,
+                    tag_list,
+                    mem_list,
+                    repos=repo_list,
+                    conventions=conventions or None,
+                    description=description or None,
+                )
+            )
         elif operation == "delete":
             return _json(workspace.delete_workspace(name))
-        return _json({"error": f"Invalid operation: {operation}. Use: create, update, delete, list"})
+        return _json(
+            {
+                "error": f"Invalid operation: {operation}. Use: create, update, delete, list"
+            }
+        )
     except Exception as e:
         return _err(e)
 

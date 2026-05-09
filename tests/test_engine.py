@@ -10,11 +10,13 @@ from task_orchestrator.engine import ToolError
 
 # --- Helpers ---
 
+
 def _create(title="Test Item", **kw):
     return engine.create_item(title=title, **kw)
 
 
 # --- CRUD ---
+
 
 def test_create_item():
     item = _create("My Task", description="desc", priority="high")
@@ -46,7 +48,9 @@ def test_create_item_max_depth():
 
 def test_update_item():
     item = _create("Original")
-    updated = engine.update_item(item["id"], title="Updated", description="new desc", priority="critical")
+    updated = engine.update_item(
+        item["id"], title="Updated", description="new desc", priority="critical"
+    )
     assert updated["title"] == "Updated"
     assert updated["description"] == "new desc"
     assert updated["priority"] == "critical"
@@ -70,6 +74,7 @@ def test_delete_item_recursive():
 
 
 # --- Query ---
+
 
 def test_query_items_by_status():
     a = _create("A")
@@ -105,6 +110,7 @@ def test_query_items_search():
 
 
 # --- Workflow ---
+
 
 def test_advance_item_workflow():
     item = _create("Flow")
@@ -142,10 +148,12 @@ def test_advance_item_cancel_reopen():
 def test_batch_transitions():
     a = _create("A")
     b = _create("B")
-    result = engine.advance_items_batch([
-        {"item_id": a["id"], "trigger": "start"},
-        {"item_id": b["id"], "trigger": "complete"},
-    ])
+    result = engine.advance_items_batch(
+        [
+            {"item_id": a["id"], "trigger": "start"},
+            {"item_id": b["id"], "trigger": "complete"},
+        ]
+    )
     assert result["summary"]["succeeded"] == 2
     assert result["summary"]["failed"] == 0
     assert result["results"][0]["new_status"] == "work"
@@ -153,6 +161,7 @@ def test_batch_transitions():
 
 
 # --- Dependencies ---
+
 
 def test_dependencies_add_query():
     a = _create("A")
@@ -208,6 +217,7 @@ def test_dependencies_unblock_at():
 
 # --- Notes ---
 
+
 def test_notes_upsert_query():
     item = _create("Noted")
     note = engine.upsert_note(item["id"], "requirements", "Must do X", role="queue")
@@ -226,6 +236,7 @@ def test_notes_delete():
 
 
 # --- Work Tree ---
+
 
 def test_create_work_tree():
     result = engine.create_work_tree(
@@ -255,6 +266,7 @@ def test_complete_tree():
 
 # --- Context ---
 
+
 def test_get_context_global():
     _create("A")
     _create("B")
@@ -279,6 +291,7 @@ def test_get_context_item():
 
 # --- Next Item / Blocked ---
 
+
 def test_get_next_item():
     _create("Low", priority="low")
     _create("Critical", priority="critical")
@@ -297,6 +310,7 @@ def test_get_blocked_items():
 
 
 # --- Short Hex ID ---
+
 
 def test_short_hex_id():
     item = _create("Resolvable")
@@ -320,6 +334,7 @@ def test_short_hex_id_not_found():
 
 # --- ToolError ---
 
+
 def test_tool_error():
     err = ToolError("VALIDATION", "bad input", field="title")
     assert err.code == "VALIDATION"
@@ -333,13 +348,16 @@ def test_tool_error():
 
 # --- Stale Detection ---
 
+
 def test_stale_detection():
     item = _create("Old Item")
     # Manually backdate updated_at to 10 days ago
     conn = db.get_connection()
     try:
         old_date = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
-        conn.execute("UPDATE work_items SET updated_at=? WHERE id=?", (old_date, item["id"]))
+        conn.execute(
+            "UPDATE work_items SET updated_at=? WHERE id=?", (old_date, item["id"])
+        )
         conn.commit()
     finally:
         conn.close()
@@ -349,6 +367,7 @@ def test_stale_detection():
 
 
 # --- Additional edge cases ---
+
 
 def test_delete_item_with_children_no_recursive():
     parent = _create("Parent")
@@ -389,6 +408,7 @@ def test_notes_upsert_update():
 
 # --- Due Dates ---
 
+
 def test_create_item_with_due_date():
     due = (datetime.now(timezone.utc) + timedelta(hours=5)).isoformat()
     item = _create("Due Soon", due_at=due)
@@ -412,6 +432,7 @@ def test_overdue_detection():
 
 
 # --- Export / Import ---
+
 
 def test_export_graph():
     a = _create("A")
@@ -464,8 +485,8 @@ def test_import_replace():
     assert result["counts"]["items"] == 2
 
 
-
 # --- FTS Search ---
+
 
 def test_fts_search_description():
     """FTS5 finds items by description content."""
@@ -492,8 +513,8 @@ def test_fts_search_partial():
     assert "authentication" in items[0]["title"]
 
 
-
 # --- Scheduled Items ---
+
 
 def test_scheduled_item_create():
     item = _create("Daily Standup", schedule="0 9 * * *")
@@ -540,6 +561,7 @@ def test_invalid_cron_expression():
 
 # --- Metrics ---
 
+
 def test_metrics_basic():
     """Create items in various states, verify metric counts."""
     # done items
@@ -554,7 +576,9 @@ def test_metrics_basic():
     conn = db.get_connection()
     try:
         old = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
-        conn.execute("UPDATE work_items SET updated_at=? WHERE id=?", (old, stale["id"]))
+        conn.execute(
+            "UPDATE work_items SET updated_at=? WHERE id=?", (old, stale["id"])
+        )
         conn.commit()
     finally:
         conn.close()
@@ -598,13 +622,16 @@ def test_metrics_throughput():
 
 # --- _parse_dt helper ---
 
+
 def test_parse_dt_aware():
     dt = engine._parse_dt("2026-05-03T12:00:00+00:00")
     assert dt.tzinfo is not None
 
+
 def test_parse_dt_naive_assumes_utc():
     dt = engine._parse_dt("2026-05-03 12:00:00")
     assert dt.tzinfo == timezone.utc
+
 
 def test_get_context_with_naive_timestamps():
     """get_context should not crash when items have naive datetime strings."""
@@ -620,6 +647,7 @@ def test_get_context_with_naive_timestamps():
     # Should not raise "can't subtract offset-naive and offset-aware datetimes"
     ctx = engine.get_context()
     assert "counts" in ctx
+
 
 def test_get_metrics_with_naive_timestamps():
     """get_metrics should not crash when done items have naive datetime strings."""
