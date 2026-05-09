@@ -1064,6 +1064,87 @@ def get_metrics(days: int = 30, workspace: str | None = None) -> dict:
         conn.close()
 
 
+# --- Workspace Context ---
+
+def get_workspace_context(workspace_name: str, verbosity: str = "standard") -> dict:
+    """Build structured context payload for subagents, scoped to a workspace."""
+    from .workspace import get_workspace_context as _ws_config
+    if verbosity not in ("minimal", "standard", "full"):
+        raise ToolError("VALIDATION", f"Invalid verbosity: {verbosity}. Valid: minimal, standard, full", "verbosity")
+    ws = _ws_config(workspace_name)
+    if ws is None:
+        raise ToolError("NOT_FOUND", f"Workspace '{workspace_name}' not found", "workspace")
+
+    conn = get_connection()
+    try:
+        ws_clause, ws_params = _workspace_tag_filter(workspace_name)
+        ws_where = f"WHERE {ws_clause}" if ws_clause else ""
+        ws_and = f"AND {ws_clause}" if ws_clause else ""
+
+        # Status counts (always included)
+        counts = {}
+        for row in conn.execute(
+            f"SELECT status, COUNT(*) as cnt FROM work_items {ws_where} GROUP BY status", ws_params
+        ).fetchall():
+            counts[row["status"]] = row["cnt"]
+
+        result = {
+            "workspace": workspace_name,
+            "brief": ws.get("description", ""),
+            "status_counts": counts,
+            "memory_tags": ws.get("memory_tags", []),
+            "next_item": get_next_item(workspace=workspace_name),
+        }
+
+        if verbosity in ("standard", "full"):
+            result["active_items"] = [
+                {"id": r["id"], "title": r["title"], "status": r["status"], "priority": r["priority"]}
+                for r in conn.execute(
+                    f"SELECT id, title, status, priority FROM work_items WHERE status IN ('work','review') {ws_and} ORDER BY updated_at DESC LIMIT 10",
+                    ws_params,
+                ).fetchall()
+            ]
+            # Blocked items scoped to workspace
+            blocked_rows = conn.execute(
+                f"SELECT id, title, status, priority FROM work_items WHERE status='blocked' {ws_and}",
+                ws_params,
+            ).fetchall()
+            queue_rows = conn.execute(
+                f"SELECT * FROM work_items WHERE status='queue' {ws_and}", ws_params
+            ).fetchall()
+            blocked = [{"id": r["id"], "title": r["title"], "status": r["status"], "priority": r["priority"]} for r in blocked_rows]
+            for r in queue_rows:
+                if _get_unsatisfied_blockers(conn, r["id"]):
+                    blocked.append({"id": r["id"], "title": r["title"], "status": r["status"], "priority": r["priority"]})
+            result["blocked_items"] = blocked
+
+        if verbosity == "full":
+            # Recent decisions: notes with 'decision' in key or role='review'
+            active_ids = [r["id"] for r in result.get("active_items", [])]
+            decisions = []
+            if active_ids:
+                placeholders = ",".join("?" for _ in active_ids)
+                notes = conn.execute(
+                    f"SELECT * FROM notes WHERE item_id IN ({placeholders}) AND (key LIKE '%decision%' OR role='review') ORDER BY updated_at DESC LIMIT 10",
+                    active_ids,
+                ).fetchall()
+                decisions = [{"key": n["key"], "body": n["body"], "updated_at": n["updated_at"]} for n in notes]
+            else:
+                # Fallback: get decisions from all workspace items
+                notes = conn.execute(
+                    f"""SELECT n.* FROM notes n JOIN work_items wi ON wi.id = n.item_id
+                        WHERE (n.key LIKE '%decision%' OR n.role='review') {ws_and.replace('AND', 'AND' if not ws_and else 'AND')}
+                        ORDER BY n.updated_at DESC LIMIT 10""",
+                    ws_params,
+                ).fetchall() if ws_clause else []
+                decisions = [{"key": n["key"], "body": n["body"], "updated_at": n["updated_at"]} for n in notes]
+            result["recent_decisions"] = decisions
+
+        return result
+    finally:
+        conn.close()
+
+
 # --- Export / Import ---
 
 def export_graph() -> dict:
