@@ -617,13 +617,15 @@ def get_next_item(workspace: str | None = None) -> dict | None:
         conn.close()
 
 
-def get_blocked_items() -> list[dict]:
+def get_blocked_items(workspace: str | None = None) -> list[dict]:
     conn = get_connection()
     try:
-        rows = conn.execute("SELECT * FROM work_items WHERE status='blocked'").fetchall()
+        ws_filter, ws_params = _workspace_tag_filter(workspace)
+        ws_and = f" AND {ws_filter}" if ws_filter else ""
+        rows = conn.execute(f"SELECT * FROM work_items WHERE status='blocked'{ws_and}", ws_params).fetchall()
         result = [_row_to_dict(r) for r in rows]
         # Also find queue items with unsatisfied deps
-        queue_rows = conn.execute("SELECT * FROM work_items WHERE status='queue'").fetchall()
+        queue_rows = conn.execute(f"SELECT * FROM work_items WHERE status='queue'{ws_and}", ws_params).fetchall()
         for r in queue_rows:
             blockers = _get_unsatisfied_blockers(conn, r["id"])
             if blockers:
@@ -679,7 +681,7 @@ def get_context(item_id: str | None = None, include_ancestors: bool = False, wor
         recent = [_row_to_dict(r) for r in conn.execute(
             f"SELECT * FROM work_items WHERE status IN ('done','cancelled') {ws_and} ORDER BY updated_at DESC LIMIT 5",
             ws_params).fetchall()]
-        blocked = get_blocked_items()
+        blocked = get_blocked_items(workspace=workspace)
         next_item = get_next_item(workspace=workspace)
         # Stale item detection
         now_dt = datetime.now(timezone.utc)

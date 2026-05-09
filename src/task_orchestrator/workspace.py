@@ -1,10 +1,13 @@
 """Workspace management — tag-group config with JSON file storage."""
 
 import json
+import logging
 import os
 from pathlib import Path
 
 from .db import DB_PATH
+
+logger = logging.getLogger(__name__)
 
 
 def _config_path() -> str:
@@ -18,8 +21,12 @@ def _load() -> dict:
     path = _config_path()
     if not os.path.exists(path):
         return {}
-    with open(path) as f:
-        return json.load(f)
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning("Failed to load workspaces config from %s: %s", path, e)
+        return {}
 
 
 def _save(data: dict):
