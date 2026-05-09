@@ -14,6 +14,8 @@ from .schemas import check_gate, should_skip_review, can_cancel, get_schema_for_
 
 from croniter import croniter, CroniterBadCronError
 
+from .workspace import get_workspace_tags
+
 VALID_STATUSES = {"queue", "work", "review", "done", "blocked", "cancelled"}
 
 
@@ -93,6 +95,17 @@ def _validate_due_at(due_at: str | None):
             datetime.fromisoformat(due_at)
         except (ValueError, TypeError):
             raise ToolError("VALIDATION", f"Invalid due_at: {due_at}. Must be ISO 8601 datetime string.", "due_at")
+
+
+def _workspace_tag_filter(workspace: str | None) -> tuple[str, list[str]]:
+    """Return (SQL clause, params) to filter items by workspace tags. Empty if no workspace."""
+    if not workspace:
+        return "", []
+    tags = get_workspace_tags(workspace)
+    if tags is None:
+        raise ToolError("NOT_FOUND", f"Workspace '{workspace}' not found", "workspace")
+    clauses = " OR ".join("tags LIKE ?" for _ in tags)
+    return f"({clauses})", [f"%{t}%" for t in tags]
 
 
 # --- WorkItem CRUD ---
@@ -570,11 +583,16 @@ def _get_scheduled_upcoming(conn, now_dt: datetime) -> list[dict]:
     return [_row_to_dict(r) for r in rows]
 
 
-def get_next_item() -> dict | None:
+def get_next_item(workspace: str | None = None) -> dict | None:
     conn = get_connection()
     try:
+        ws_clause, ws_params = _workspace_tag_filter(workspace)
+        where = "WHERE status IN ('queue','work')"
+        if ws_clause:
+            where += f" AND {ws_clause}"
         rows = conn.execute(
-            "SELECT * FROM work_items WHERE status IN ('queue','work') ORDER BY status ASC, created_at ASC",
+            f"SELECT * FROM work_items {where} ORDER BY status ASC, created_at ASC",
+            ws_params,
         ).fetchall()
         now_iso = _now()
         candidates = []
@@ -617,7 +635,7 @@ def get_blocked_items() -> list[dict]:
         conn.close()
 
 
-def get_context(item_id: str | None = None, include_ancestors: bool = False) -> dict:
+def get_context(item_id: str | None = None, include_ancestors: bool = False, workspace: str | None = None) -> dict:
     conn = get_connection()
     try:
         if item_id:
@@ -646,20 +664,29 @@ def get_context(item_id: str | None = None, include_ancestors: bool = False) -> 
                     result["guidance"] = gate["guidance"]
             return result
         # Global context
+        ws_clause, ws_params = _workspace_tag_filter(workspace)
+        ws_where = f"WHERE {ws_clause}" if ws_clause else ""
+        ws_and = f"AND {ws_clause}" if ws_clause else ""
+
         counts = {}
-        for row in conn.execute("SELECT status, COUNT(*) as cnt FROM work_items GROUP BY status").fetchall():
+        for row in conn.execute(
+            f"SELECT status, COUNT(*) as cnt FROM work_items {ws_where} GROUP BY status", ws_params
+        ).fetchall():
             counts[row["status"]] = row["cnt"]
         active = [_row_to_dict(r) for r in conn.execute(
-            "SELECT * FROM work_items WHERE status IN ('work','review') ORDER BY updated_at DESC LIMIT 10").fetchall()]
+            f"SELECT * FROM work_items WHERE status IN ('work','review') {ws_and} ORDER BY updated_at DESC LIMIT 10",
+            ws_params).fetchall()]
         recent = [_row_to_dict(r) for r in conn.execute(
-            "SELECT * FROM work_items WHERE status IN ('done','cancelled') ORDER BY updated_at DESC LIMIT 5").fetchall()]
+            f"SELECT * FROM work_items WHERE status IN ('done','cancelled') {ws_and} ORDER BY updated_at DESC LIMIT 5",
+            ws_params).fetchall()]
         blocked = get_blocked_items()
-        next_item = get_next_item()
+        next_item = get_next_item(workspace=workspace)
         # Stale item detection
         now_dt = datetime.now(timezone.utc)
         stale_items = []
         for row in conn.execute(
-            "SELECT * FROM work_items WHERE status IN ('queue','work')"
+            f"SELECT * FROM work_items WHERE status IN ('queue','work') {ws_and}",
+            ws_params,
         ).fetchall():
             item = _row_to_dict(row)
             updated = _parse_dt(item["updated_at"])
@@ -946,18 +973,21 @@ def complete_tree(parent_id: str) -> dict:
 
 # --- Metrics ---
 
-def get_metrics(days: int = 30) -> dict:
+def get_metrics(days: int = 30, workspace: str | None = None) -> dict:
     """Work metrics: throughput, lead time, WIP, stale ratio, breakdowns."""
     conn = get_connection()
     try:
+        ws_clause, ws_params = _workspace_tag_filter(workspace)
+        ws_and = f"AND {ws_clause}" if ws_clause else ""
+
         now_dt = datetime.now(timezone.utc)
         cutoff = (now_dt - timedelta(days=days)).isoformat()
         stale_cutoff = (now_dt - timedelta(days=7)).isoformat()
 
         # Throughput per week (done items in period, grouped by ISO week)
         rows = conn.execute(
-            "SELECT updated_at FROM work_items WHERE status='done' AND updated_at >= ?",
-            (cutoff,),
+            f"SELECT updated_at FROM work_items WHERE status='done' AND updated_at >= ? {ws_and}",
+            [cutoff] + ws_params,
         ).fetchall()
         week_counts: dict[str, int] = {}
         for r in rows:
@@ -969,8 +999,8 @@ def get_metrics(days: int = 30) -> dict:
 
         # Lead time avg (done items in period)
         lt_rows = conn.execute(
-            "SELECT created_at, updated_at FROM work_items WHERE status='done' AND updated_at >= ?",
-            (cutoff,),
+            f"SELECT created_at, updated_at FROM work_items WHERE status='done' AND updated_at >= ? {ws_and}",
+            [cutoff] + ws_params,
         ).fetchall()
         if lt_rows:
             total_secs = sum(
@@ -982,23 +1012,24 @@ def get_metrics(days: int = 30) -> dict:
             lead_time_avg = 0.0
 
         # WIP
-        wip = conn.execute("SELECT COUNT(*) as cnt FROM work_items WHERE status='work'").fetchone()["cnt"]
+        wip = conn.execute(f"SELECT COUNT(*) as cnt FROM work_items WHERE status='work' {ws_and}", ws_params).fetchone()["cnt"]
 
         # Stale ratio
         non_terminal = conn.execute(
-            "SELECT COUNT(*) as cnt FROM work_items WHERE status NOT IN ('done','cancelled')"
+            f"SELECT COUNT(*) as cnt FROM work_items WHERE status NOT IN ('done','cancelled') {ws_and}",
+            ws_params,
         ).fetchone()["cnt"]
         stale = conn.execute(
-            "SELECT COUNT(*) as cnt FROM work_items WHERE status NOT IN ('done','cancelled') AND updated_at < ?",
-            (stale_cutoff,),
+            f"SELECT COUNT(*) as cnt FROM work_items WHERE status NOT IN ('done','cancelled') AND updated_at < ? {ws_and}",
+            [stale_cutoff] + ws_params,
         ).fetchone()["cnt"]
         stale_ratio = (stale / non_terminal * 100) if non_terminal else 0.0
 
         # By priority (done in period)
         by_priority = {"critical": 0, "high": 0, "medium": 0, "low": 0}
         for r in conn.execute(
-            "SELECT priority, COUNT(*) as cnt FROM work_items WHERE status='done' AND updated_at >= ? GROUP BY priority",
-            (cutoff,),
+            f"SELECT priority, COUNT(*) as cnt FROM work_items WHERE status='done' AND updated_at >= ? {ws_and} GROUP BY priority",
+            [cutoff] + ws_params,
         ).fetchall():
             if r["priority"] in by_priority:
                 by_priority[r["priority"]] = r["cnt"]
@@ -1006,7 +1037,8 @@ def get_metrics(days: int = 30) -> dict:
         # By tag (top 10 tags across non-terminal items)
         tag_counts: dict[str, int] = {}
         for r in conn.execute(
-            "SELECT tags FROM work_items WHERE status NOT IN ('done','cancelled') AND tags != ''"
+            f"SELECT tags FROM work_items WHERE status NOT IN ('done','cancelled') AND tags != '' {ws_and}",
+            ws_params,
         ).fetchall():
             for tag in r["tags"].split(","):
                 tag = tag.strip()
@@ -1015,7 +1047,8 @@ def get_metrics(days: int = 30) -> dict:
         by_tag = dict(sorted(tag_counts.items(), key=lambda x: -x[1])[:10])
 
         # Total items
-        total = conn.execute("SELECT COUNT(*) as cnt FROM work_items").fetchone()["cnt"]
+        ws_where = f"WHERE {ws_clause}" if ws_clause else ""
+        total = conn.execute(f"SELECT COUNT(*) as cnt FROM work_items {ws_where}", ws_params).fetchone()["cnt"]
 
         return {
             "throughput_per_week": throughput,
@@ -1033,19 +1066,42 @@ def get_metrics(days: int = 30) -> dict:
 
 # --- Export / Import ---
 
-def export_graph() -> dict:
-    """Export all items, notes, and dependencies as a JSON-serializable dict."""
+def export_graph(workspace: str = "", tags: list[str] | None = None) -> dict:
+    """Export items, notes, and dependencies as a JSON-serializable dict.
+
+    If workspace or tags are provided, only items matching those tags are exported
+    (along with their notes and dependencies between them).
+    No filter = export all (backward compatible).
+    """
     conn = get_connection()
     try:
-        items = [_row_to_dict(r) for r in conn.execute("SELECT * FROM work_items").fetchall()]
-        notes = [_row_to_dict(r) for r in conn.execute("SELECT * FROM notes").fetchall()]
-        deps = [_row_to_dict(r) for r in conn.execute("SELECT * FROM dependencies").fetchall()]
+        filter_tags = tags or ([workspace] if workspace else [])
+        if filter_tags:
+            # Filter items that have any of the specified tags
+            all_items = [_row_to_dict(r) for r in conn.execute("SELECT * FROM work_items").fetchall()]
+            items = [
+                i for i in all_items
+                if i.get("tags") and any(t in i["tags"].split(",") for t in filter_tags)
+            ]
+            item_ids = {i["id"] for i in items}
+            notes = [
+                _row_to_dict(r) for r in conn.execute("SELECT * FROM notes").fetchall()
+                if r["item_id"] in item_ids
+            ]
+            deps = [
+                _row_to_dict(r) for r in conn.execute("SELECT * FROM dependencies").fetchall()
+                if r["from_id"] in item_ids and r["to_id"] in item_ids
+            ]
+        else:
+            items = [_row_to_dict(r) for r in conn.execute("SELECT * FROM work_items").fetchall()]
+            notes = [_row_to_dict(r) for r in conn.execute("SELECT * FROM notes").fetchall()]
+            deps = [_row_to_dict(r) for r in conn.execute("SELECT * FROM dependencies").fetchall()]
         return {
             "items": items,
             "notes": notes,
             "dependencies": deps,
             "exported_at": _now(),
-            "version": "0.7.0",
+            "version": "0.8.0",
         }
     finally:
         conn.close()
@@ -1079,6 +1135,7 @@ def import_graph(data: dict, mode: str = "merge") -> dict:
     """Import items, notes, and dependencies from an exported dict.
 
     mode='merge': insert rows that don't exist (skip on conflict).
+                  For notes, updates body if incoming note is newer.
     mode='replace': delete everything first, then insert all.
     """
     if mode not in ("merge", "replace"):
@@ -1093,7 +1150,13 @@ def import_graph(data: dict, mode: str = "merge") -> dict:
         # Sort items: parents first, then children (topological order)
         sorted_items = _sort_items_by_depth(data.get("items", []))
         _insert_rows(conn, "work_items", sorted_items)
-        _insert_rows(conn, "notes", data.get("notes", []))
+
+        # Notes: merge if newer
+        if mode == "merge":
+            _merge_notes(conn, data.get("notes", []))
+        else:
+            _insert_rows(conn, "notes", data.get("notes", []))
+
         _insert_rows(conn, "dependencies", data.get("dependencies", []))
         conn.commit()
         counts = {
@@ -1104,3 +1167,28 @@ def import_graph(data: dict, mode: str = "merge") -> dict:
         return {"imported": True, "mode": mode, "counts": counts}
     finally:
         conn.close()
+
+
+def _merge_notes(conn, notes: list[dict]):
+    """Insert new notes, update existing ones if incoming is newer."""
+    for note in notes:
+        existing = conn.execute(
+            "SELECT updated_at FROM notes WHERE item_id = ? AND key = ?",
+            (note.get("item_id"), note.get("key")),
+        ).fetchone()
+        if existing is None:
+            # Insert new note
+            columns = _get_table_columns(conn, "notes")
+            cols = [c for c in columns if c in note]
+            placeholders = ",".join("?" for _ in cols)
+            col_names = ",".join(cols)
+            conn.execute(
+                f"INSERT OR IGNORE INTO notes ({col_names}) VALUES ({placeholders})",
+                tuple(note.get(c) for c in cols),
+            )
+        elif note.get("updated_at", "") > (existing["updated_at"] or ""):
+            # Update if incoming is newer
+            conn.execute(
+                "UPDATE notes SET body = ?, updated_at = ? WHERE item_id = ? AND key = ?",
+                (note.get("body", ""), note.get("updated_at"), note.get("item_id"), note.get("key")),
+            )

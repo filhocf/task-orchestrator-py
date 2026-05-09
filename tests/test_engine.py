@@ -419,7 +419,7 @@ def test_export_graph():
     engine.upsert_note(a["id"], "req", "requirement body", role="queue")
     engine.add_dependency(a["id"], b["id"])
     data = engine.export_graph()
-    assert data["version"] == "0.7.0"
+    assert data["version"] == "0.8.0"
     assert "exported_at" in data
     assert len(data["items"]) >= 2
     assert len(data["notes"]) >= 1

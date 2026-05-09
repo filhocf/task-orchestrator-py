@@ -6,6 +6,8 @@ from . import db, engine
 from .engine import ToolError
 from .schemas import get_schemas, load_schemas, get_schema_for_item
 from .prompts import register_prompts
+from . import workspace
+from . import checkpoints
 
 mcp = FastMCP(
     "task-orchestrator",
@@ -162,27 +164,30 @@ def get_next_status(item_id: str, trigger: str) -> str:
 
 
 @mcp.tool()
-def get_next_item() -> str:
+def get_next_item(workspace: str = "") -> str:
     """Get the highest-priority actionable item with no unsatisfied dependencies.
 
     Returns the single best next item to work on, or null if nothing is actionable.
     Priority: items already in 'work' first, then by priority (critical > high > medium > low).
+    Use workspace to filter by workspace tags (e.g. workspace="dtp").
     """
-    result = engine.get_next_item()
+    result = engine.get_next_item(workspace=workspace or None)
     return _json(result) if result else _json({"message": "No actionable items"})
 
 
 @mcp.tool()
-def get_context(item_id: str = "", include_ancestors: bool = False) -> str:
+def get_context(item_id: str = "", include_ancestors: bool = False, workspace: str = "") -> str:
     """Get context snapshot for session resume or item inspection.
 
     Without item_id: global dashboard — status counts, active items, blocked items, next action.
     With item_id: item detail — children, notes, blockers, can_advance flag.
     Use include_ancestors=true to get the full parent chain.
+    Use workspace to filter by workspace tags (e.g. workspace="dtp").
     Call this at session start to understand current work state.
     """
     try:
-        return _json(engine.get_context(_resolve(item_id) or None, include_ancestors=include_ancestors))
+        return _json(engine.get_context(_resolve(item_id) or None, include_ancestors=include_ancestors,
+                                        workspace=workspace or None))
     except Exception as e:
         return _err(e)
 
@@ -372,26 +377,33 @@ def manage_schemas(operation: str = "list", schema_name: str = "", item_id: str 
 
 
 @mcp.tool()
-def get_metrics(days: int = 30) -> str:
+def get_metrics(days: int = 30, workspace: str = "") -> str:
     """Work metrics — throughput per week, average lead time, WIP count, stale ratio, breakdowns by priority and tag.
 
     Optional days param controls the lookback period (default: 30).
+    Use workspace to filter by workspace tags (e.g. workspace="dtp").
     """
     try:
-        return _json(engine.get_metrics(days=days))
+        return _json(engine.get_metrics(days=days, workspace=workspace or None))
     except Exception as e:
         return _err(e)
 
 
 @mcp.tool()
-def export_graph() -> str:
+def export_graph(workspace: str = "", tags: str = "") -> str:
     """Export the entire work graph (items, notes, dependencies) as JSON.
 
     Returns a JSON object with items, notes, dependencies, exported_at timestamp, and version.
     Use import_graph to restore from this export.
+
+    Optional filters (export subset):
+    - workspace: export only items tagged with this workspace name
+    - tags: comma-separated tag list to filter items
+    No filters = export all (default behavior).
     """
     try:
-        return _json(engine.export_graph())
+        tags_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
+        return _json(engine.export_graph(workspace=workspace, tags=tags_list))
     except Exception as e:
         return _err(e)
 
@@ -411,7 +423,79 @@ def import_graph(data_json: str, mode: str = "merge") -> str:
         return _err(e)
 
 
+@mcp.tool()
+def manage_checkpoints(operation: str, filepath: str = "",
+                       interval_minutes: int | None = None,
+                       output_path: str = "") -> str:
+    """Manage checkpoint snapshots for resilience and multi-machine sync.
+
+    Operations:
+    - create: immediate export to checkpoint file
+    - list: show available checkpoints
+    - restore: import from a specific checkpoint (requires filepath)
+    - configure: set interval_minutes and/or output_path
+    - verify: check database integrity
+    """
+    try:
+        if operation == "create":
+            data = engine.export_graph()
+            return _json(checkpoints.create_checkpoint(data))
+        elif operation == "list":
+            return _json(checkpoints.list_checkpoints())
+        elif operation == "restore":
+            if not filepath:
+                return _json({"error": "filepath required for restore"})
+            data = checkpoints.load_checkpoint(filepath)
+            result = engine.import_graph(data, mode="replace")
+            return _json(result)
+        elif operation == "configure":
+            return _json(checkpoints.configure(
+                interval_minutes=interval_minutes,
+                output_path=output_path or None,
+            ))
+        elif operation == "verify":
+            return _json(checkpoints.verify_db_integrity())
+        else:
+            return _json({"error": f"Invalid operation: {operation}. Valid: create, list, restore, configure, verify"})
+    except Exception as e:
+        return _err(e)
+
+
+
+@mcp.tool()
+def manage_workspaces(operation: str, name: str = "", tags: str = "", memory_tags: str = "") -> str:
+    """Manage workspace configurations. Workspaces map tag groups for scoped queries.
+
+    Operations: create, update, delete, list.
+    tags: comma-separated list of item tags that belong to this workspace.
+    memory_tags: comma-separated list of memory service tags for this workspace.
+    Use workspace param in get_context, get_next_item, get_metrics to filter by workspace.
+    """
+    try:
+        if operation == "list":
+            return _json(workspace.list_workspaces())
+        elif operation == "create":
+            tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+            mem_list = [t.strip() for t in memory_tags.split(",") if t.strip()] if memory_tags else []
+            return _json(workspace.create_workspace(name, tag_list, mem_list))
+        elif operation == "update":
+            tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
+            mem_list = [t.strip() for t in memory_tags.split(",") if t.strip()] if memory_tags else None
+            return _json(workspace.update_workspace(name, tag_list, mem_list))
+        elif operation == "delete":
+            return _json(workspace.delete_workspace(name))
+        return _json({"error": f"Invalid operation: {operation}. Use: create, update, delete, list"})
+    except Exception as e:
+        return _err(e)
+
+
 def main():
+    # Corruption detection on startup
+    recovery = checkpoints.auto_recover()
+    if recovery:
+        import logging
+        logging.getLogger(__name__).warning("Startup recovery: %s", recovery)
+
     db.init_db()
     register_prompts(mcp)
     mcp.run()
