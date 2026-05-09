@@ -69,28 +69,29 @@ CREATE INDEX IF NOT EXISTS idx_due_at ON work_items(due_at) WHERE due_at IS NOT 
 """
 
 MIGRATIONS = [
-    ("previous_status",
-     "ALTER TABLE work_items ADD COLUMN previous_status TEXT DEFAULT NULL"),
-    ("unblock_at",
-     "ALTER TABLE dependencies ADD COLUMN unblock_at TEXT NOT NULL DEFAULT 'done'"),
-    ("summary",
-     "ALTER TABLE work_items ADD COLUMN summary TEXT DEFAULT ''"),
-    ("status_label",
-     "ALTER TABLE work_items ADD COLUMN status_label TEXT DEFAULT NULL"),
-    ("complexity",
-     "ALTER TABLE work_items ADD COLUMN complexity INTEGER DEFAULT NULL"),
-    ("metadata",
-     "ALTER TABLE work_items ADD COLUMN metadata TEXT DEFAULT NULL"),
-    ("properties",
-     "ALTER TABLE work_items ADD COLUMN properties TEXT DEFAULT NULL"),
-    ("role_changed_at",
-     "ALTER TABLE work_items ADD COLUMN role_changed_at TEXT DEFAULT NULL"),
-    ("due_at",
-     "ALTER TABLE work_items ADD COLUMN due_at TEXT DEFAULT NULL"),
-    ("schedule",
-     "ALTER TABLE work_items ADD COLUMN schedule TEXT DEFAULT NULL"),
-    ("next_run_at",
-     "ALTER TABLE work_items ADD COLUMN next_run_at TEXT DEFAULT NULL"),
+    (
+        "previous_status",
+        "ALTER TABLE work_items ADD COLUMN previous_status TEXT DEFAULT NULL",
+    ),
+    (
+        "unblock_at",
+        "ALTER TABLE dependencies ADD COLUMN unblock_at TEXT NOT NULL DEFAULT 'done'",
+    ),
+    ("summary", "ALTER TABLE work_items ADD COLUMN summary TEXT DEFAULT ''"),
+    (
+        "status_label",
+        "ALTER TABLE work_items ADD COLUMN status_label TEXT DEFAULT NULL",
+    ),
+    ("complexity", "ALTER TABLE work_items ADD COLUMN complexity INTEGER DEFAULT NULL"),
+    ("metadata", "ALTER TABLE work_items ADD COLUMN metadata TEXT DEFAULT NULL"),
+    ("properties", "ALTER TABLE work_items ADD COLUMN properties TEXT DEFAULT NULL"),
+    (
+        "role_changed_at",
+        "ALTER TABLE work_items ADD COLUMN role_changed_at TEXT DEFAULT NULL",
+    ),
+    ("due_at", "ALTER TABLE work_items ADD COLUMN due_at TEXT DEFAULT NULL"),
+    ("schedule", "ALTER TABLE work_items ADD COLUMN schedule TEXT DEFAULT NULL"),
+    ("next_run_at", "ALTER TABLE work_items ADD COLUMN next_run_at TEXT DEFAULT NULL"),
 ]
 
 

@@ -15,7 +15,9 @@ DEFAULT_CHECKPOINT_DIR = str(Path.home() / ".task-orchestrator" / "checkpoints")
 
 _config = {
     "interval_minutes": 30,
-    "output_path": os.environ.get("TASK_ORCHESTRATOR_CHECKPOINT_DIR", DEFAULT_CHECKPOINT_DIR),
+    "output_path": os.environ.get(
+        "TASK_ORCHESTRATOR_CHECKPOINT_DIR", DEFAULT_CHECKPOINT_DIR
+    ),
 }
 
 
@@ -23,7 +25,9 @@ def get_config() -> dict:
     return dict(_config)
 
 
-def configure(interval_minutes: int | None = None, output_path: str | None = None) -> dict:
+def configure(
+    interval_minutes: int | None = None, output_path: str | None = None
+) -> dict:
     if interval_minutes is not None:
         _config["interval_minutes"] = interval_minutes
     if output_path is not None:
@@ -52,14 +56,16 @@ def list_checkpoints() -> list[dict]:
     for name in sorted(os.listdir(out_dir), reverse=True):
         if name.startswith("checkpoint-") and name.endswith(".json"):
             path = os.path.join(out_dir, name)
-            files.append({
-                "filename": name,
-                "path": path,
-                "size_bytes": os.path.getsize(path),
-                "modified_at": datetime.fromtimestamp(
-                    os.path.getmtime(path), tz=timezone.utc
-                ).isoformat(),
-            })
+            files.append(
+                {
+                    "filename": name,
+                    "path": path,
+                    "size_bytes": os.path.getsize(path),
+                    "modified_at": datetime.fromtimestamp(
+                        os.path.getmtime(path), tz=timezone.utc
+                    ).isoformat(),
+                }
+            )
     return files
 
 
@@ -114,6 +120,7 @@ def auto_recover() -> dict | None:
 
     data = load_checkpoint(latest["path"])
     from .engine import import_graph
+
     import_graph(data, mode="replace")
 
     return {"recovered": True, "from_checkpoint": latest["filename"]}
