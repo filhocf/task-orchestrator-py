@@ -1,6 +1,5 @@
 """Tests for resilience features: filtered export, checkpoints, corruption recovery."""
 
-import json
 import os
 
 import pytest
