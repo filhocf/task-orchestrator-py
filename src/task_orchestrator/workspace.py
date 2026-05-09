@@ -6,6 +6,9 @@ from pathlib import Path
 
 from .db import DB_PATH
 
+# Valid workspace config fields (beyond required 'tags')
+OPTIONAL_FIELDS = ("memory_tags", "repos", "conventions", "description")
+
 
 def _config_path() -> str:
     return os.environ.get(
@@ -33,16 +36,37 @@ def list_workspaces() -> dict:
     return _load()
 
 
-def create_workspace(name: str, tags: list[str], memory_tags: list[str] | None = None) -> dict:
+def create_workspace(
+    name: str,
+    tags: list[str],
+    memory_tags: list[str] | None = None,
+    repos: list[str] | None = None,
+    conventions: str | None = None,
+    description: str | None = None,
+) -> dict:
     data = _load()
     if name in data:
         raise ValueError(f"Workspace '{name}' already exists")
-    data[name] = {"tags": tags, "memory_tags": memory_tags or []}
+    ws = {"tags": tags, "memory_tags": memory_tags or []}
+    if repos:
+        ws["repos"] = repos
+    if conventions:
+        ws["conventions"] = conventions
+    if description:
+        ws["description"] = description
+    data[name] = ws
     _save(data)
     return {name: data[name]}
 
 
-def update_workspace(name: str, tags: list[str] | None = None, memory_tags: list[str] | None = None) -> dict:
+def update_workspace(
+    name: str,
+    tags: list[str] | None = None,
+    memory_tags: list[str] | None = None,
+    repos: list[str] | None = None,
+    conventions: str | None = None,
+    description: str | None = None,
+) -> dict:
     data = _load()
     if name not in data:
         raise ValueError(f"Workspace '{name}' not found")
@@ -50,6 +74,12 @@ def update_workspace(name: str, tags: list[str] | None = None, memory_tags: list
         data[name]["tags"] = tags
     if memory_tags is not None:
         data[name]["memory_tags"] = memory_tags
+    if repos is not None:
+        data[name]["repos"] = repos
+    if conventions is not None:
+        data[name]["conventions"] = conventions
+    if description is not None:
+        data[name]["description"] = description
     _save(data)
     return {name: data[name]}
 
@@ -68,3 +98,9 @@ def get_workspace_tags(name: str) -> list[str] | None:
     data = _load()
     ws = data.get(name)
     return ws["tags"] if ws else None
+
+
+def get_workspace_context(name: str) -> dict | None:
+    """Get full workspace config for context injection. Returns None if not found."""
+    data = _load()
+    return data.get(name)

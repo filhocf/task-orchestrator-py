@@ -415,14 +415,41 @@ def import_graph(data_json: str, mode: str = "merge") -> str:
     except Exception as e:
         return _err(e)
 
+@mcp.tool()
+def get_workspace_context(workspace: str, verbosity: str = "standard") -> str:
+    """Get structured context payload for subagents, scoped to a workspace.
+
+    Returns workspace brief, status counts, active/blocked items, and next action.
+    Verbosity levels control token budget:
+    - minimal: workspace + status_counts + next_item + memory_tags (~200 tokens)
+    - standard: + active_items + blocked_items (~1000 tokens)
+    - full: + recent_decisions (~2000 tokens)
+    """
+    try:
+        return _json(engine.get_workspace_context(workspace, verbosity=verbosity))
+    except Exception as e:
+        return _err(e)
+
+
 
 @mcp.tool()
-def manage_workspaces(operation: str, name: str = "", tags: str = "", memory_tags: str = "") -> str:
+def manage_workspaces(
+    operation: str,
+    name: str = "",
+    tags: str = "",
+    memory_tags: str = "",
+    repos: str = "",
+    conventions: str = "",
+    description: str = "",
+) -> str:
     """Manage workspace configurations. Workspaces map tag groups for scoped queries.
 
     Operations: create, update, delete, list.
     tags: comma-separated list of item tags that belong to this workspace.
-    memory_tags: comma-separated list of memory service tags for this workspace.
+    memory_tags: comma-separated list of tags to search in external memory service (mcp-memory-service).
+    repos: comma-separated list of repo paths associated with this workspace.
+    conventions: free-text coding conventions for this workspace.
+    description: workspace description (used as brief in get_workspace_context).
     Use workspace param in get_context, get_next_item, get_metrics to filter by workspace.
     """
     try:
@@ -431,11 +458,23 @@ def manage_workspaces(operation: str, name: str = "", tags: str = "", memory_tag
         elif operation == "create":
             tag_list = [t.strip() for t in tags.split(",") if t.strip()]
             mem_list = [t.strip() for t in memory_tags.split(",") if t.strip()] if memory_tags else []
-            return _json(workspace.create_workspace(name, tag_list, mem_list))
+            repo_list = [r.strip() for r in repos.split(",") if r.strip()] if repos else None
+            return _json(workspace.create_workspace(
+                name, tag_list, mem_list,
+                repos=repo_list,
+                conventions=conventions or None,
+                description=description or None,
+            ))
         elif operation == "update":
             tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
             mem_list = [t.strip() for t in memory_tags.split(",") if t.strip()] if memory_tags else None
-            return _json(workspace.update_workspace(name, tag_list, mem_list))
+            repo_list = [r.strip() for r in repos.split(",") if r.strip()] if repos else None
+            return _json(workspace.update_workspace(
+                name, tag_list, mem_list,
+                repos=repo_list,
+                conventions=conventions or None,
+                description=description or None,
+            ))
         elif operation == "delete":
             return _json(workspace.delete_workspace(name))
         return _json({"error": f"Invalid operation: {operation}. Use: create, update, delete, list"})
