@@ -919,14 +919,12 @@ def get_context(
         ws_and = f"AND {ws_clause}" if ws_clause else ""
 
         # Combine workspace + archived filters for WHERE clause
-        if ws_clause and not include_archived:
-            combined_where = f"WHERE {ws_clause} AND status != 'archived'"
-        elif ws_clause:
-            combined_where = f"WHERE {ws_clause}"
-        elif not include_archived:
-            combined_where = "WHERE status != 'archived'"
-        else:
-            combined_where = ""
+        clauses = []
+        if ws_clause:
+            clauses.append(ws_clause)
+        if not include_archived:
+            clauses.append("status != 'archived'")
+        combined_where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
 
         counts = {}
         for row in conn.execute(
@@ -1469,10 +1467,10 @@ def archive_items(workspace: str | None = None, days: int = 30) -> dict:
 
         now = _now()
         ids = [r["id"] for r in rows]
-        for item_id in ids:
+        if ids:
             conn.execute(
-                "UPDATE work_items SET status='archived', role_changed_at=?, updated_at=? WHERE id=?",
-                (now, now, item_id),
+                f"UPDATE work_items SET status='archived', role_changed_at=?, updated_at=? WHERE status='done' AND updated_at < ? {ws_and}",
+                [now, now, cutoff] + ws_params,
             )
         conn.commit()
         return {"archived_count": len(ids), "archived_ids": ids}

@@ -35,45 +35,46 @@
 </div>
 
 <script>
-document.querySelectorAll('.kanban-column').forEach(col => {
-    new Sortable(col, {
-        group: 'kanban',
-        animation: 150,
-        ghostClass: 'sortable-ghost',
-        onEnd: function(evt) {
-            const itemId = evt.item.dataset.id;
-            const newStatus = evt.to.dataset.status;
-            const workspace = '{{ workspace }}';
+var sortableInstances = [];
 
-            fetch('/board/move', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-                body: `item_id=${itemId}&new_status=${newStatus}&workspace=${workspace}`
-            }).then(r => r.text()).then(html => {
-                // Refresh all columns
-                const tmp = document.createElement('div');
-                tmp.innerHTML = html;
-                const newCols = tmp.querySelectorAll('[data-status]');
-                newCols.forEach(newCol => {
-                    const status = newCol.dataset.status;
-                    const existing = document.getElementById('col-' + status);
-                    if (existing) {
-                        existing.parentElement.querySelector('span').textContent = newCol.querySelectorAll('.card').length;
-                        existing.innerHTML = newCol.innerHTML;
-                    }
-                });
-                // Re-init sortable
-                document.querySelectorAll('.kanban-column').forEach(c => {
-                    new Sortable(c, {
-                        group: 'kanban',
-                        animation: 150,
-                        ghostClass: 'sortable-ghost',
-                        onEnd: arguments.callee
+function initSortable() {
+    // Destroy existing instances to prevent memory leaks
+    sortableInstances.forEach(s => s.destroy());
+    sortableInstances = [];
+
+    document.querySelectorAll('.kanban-column').forEach(col => {
+        sortableInstances.push(new Sortable(col, {
+            group: 'kanban',
+            animation: 150,
+            ghostClass: 'sortable-ghost',
+            onEnd: function(evt) {
+                const itemId = evt.item.dataset.id;
+                const newStatus = evt.to.dataset.status;
+                const workspace = '{{ workspace }}';
+
+                fetch('/board/move', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                    body: `item_id=${itemId}&new_status=${newStatus}&workspace=${workspace}`
+                }).then(r => r.text()).then(html => {
+                    const tmp = document.createElement('div');
+                    tmp.innerHTML = html;
+                    const newCols = tmp.querySelectorAll('[data-status]');
+                    newCols.forEach(newCol => {
+                        const status = newCol.dataset.status;
+                        const existing = document.getElementById('col-' + status);
+                        if (existing) {
+                            existing.parentElement.querySelector('span').textContent = newCol.querySelectorAll('.card').length;
+                            existing.innerHTML = newCol.innerHTML;
+                        }
                     });
+                    initSortable();
                 });
-            });
-        }
+            }
+        }));
     });
-});
+}
+
+initSortable();
 </script>
 {% endblock %}
