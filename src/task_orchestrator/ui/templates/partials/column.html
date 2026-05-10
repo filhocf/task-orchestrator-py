@@ -1,0 +1,8 @@
+<div class="kanban-column space-y-2" data-status="{{ status }}" id="col-{{ status }}">
+    {% if error %}
+    <div class="text-xs text-red-400 bg-red-900/30 rounded p-1 mb-1">{{ error }}</div>
+    {% endif %}
+    {% for item in items %}
+    {% include "partials/card.html" %}
+    {% endfor %}
+</div>
