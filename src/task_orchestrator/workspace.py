@@ -41,18 +41,34 @@ def list_workspaces() -> dict:
 
 
 def create_workspace(
-    name: str, tags: list[str], memory_tags: list[str] | None = None
+    name: str,
+    tags: list[str],
+    memory_tags: list[str] | None = None,
+    description: str = "",
+    repos: list[str] | None = None,
+    conventions: list[str] | None = None,
 ) -> dict:
     data = _load()
     if name in data:
         raise ValueError(f"Workspace '{name}' already exists")
-    data[name] = {"tags": tags, "memory_tags": memory_tags or []}
+    data[name] = {
+        "tags": tags,
+        "memory_tags": memory_tags or [],
+        "description": description,
+        "repos": repos or [],
+        "conventions": conventions or [],
+    }
     _save(data)
     return {name: data[name]}
 
 
 def update_workspace(
-    name: str, tags: list[str] | None = None, memory_tags: list[str] | None = None
+    name: str,
+    tags: list[str] | None = None,
+    memory_tags: list[str] | None = None,
+    description: str | None = None,
+    repos: list[str] | None = None,
+    conventions: list[str] | None = None,
 ) -> dict:
     data = _load()
     if name not in data:
@@ -61,6 +77,12 @@ def update_workspace(
         data[name]["tags"] = tags
     if memory_tags is not None:
         data[name]["memory_tags"] = memory_tags
+    if description is not None:
+        data[name]["description"] = description
+    if repos is not None:
+        data[name]["repos"] = repos
+    if conventions is not None:
+        data[name]["conventions"] = conventions
     _save(data)
     return {name: data[name]}
 
@@ -79,3 +101,9 @@ def get_workspace_tags(name: str) -> list[str] | None:
     data = _load()
     ws = data.get(name)
     return ws["tags"] if ws else None
+
+
+def get_workspace_config(name: str) -> dict | None:
+    """Get full workspace config. Returns None if workspace not found."""
+    data = _load()
+    return data.get(name)

@@ -586,14 +586,36 @@ def manage_checkpoints(operation: str, path: str = "", output_dir: str = "") -> 
 
 
 @mcp.tool()
+def get_workspace_context(workspace_name: str, verbosity: str = "standard") -> str:
+    """Get workspace context at varying verbosity levels.
+
+    verbosity: minimal (counts + next), standard (+ active/blocked), full (+ recent decisions).
+    Returns workspace brief, status counts, memory_tags, next_item, and more based on verbosity.
+    """
+    try:
+        return _json(engine.get_workspace_context(workspace_name, verbosity))
+    except Exception as e:
+        return _err(e)
+
+
+@mcp.tool()
 def manage_workspaces(
-    operation: str, name: str = "", tags: str = "", memory_tags: str = ""
+    operation: str,
+    name: str = "",
+    tags: str = "",
+    memory_tags: str = "",
+    description: str = "",
+    repos: str = "",
+    conventions: str = "",
 ) -> str:
     """Manage workspace configurations. Workspaces map tag groups for scoped queries.
 
     Operations: create, update, delete, list.
     tags: comma-separated list of item tags that belong to this workspace.
     memory_tags: comma-separated list of memory service tags for this workspace.
+    description: brief description of the workspace purpose.
+    repos: comma-separated list of repository paths.
+    conventions: comma-separated list of coding conventions.
     Use workspace param in get_context, get_next_item, get_metrics to filter by workspace.
     """
     try:
@@ -606,7 +628,19 @@ def manage_workspaces(
                 if memory_tags
                 else []
             )
-            return _json(workspace.create_workspace(name, tag_list, mem_list))
+            repo_list = (
+                [t.strip() for t in repos.split(",") if t.strip()] if repos else []
+            )
+            conv_list = (
+                [t.strip() for t in conventions.split(",") if t.strip()]
+                if conventions
+                else []
+            )
+            return _json(
+                workspace.create_workspace(
+                    name, tag_list, mem_list, description, repo_list, conv_list
+                )
+            )
         elif operation == "update":
             tag_list = (
                 [t.strip() for t in tags.split(",") if t.strip()] if tags else None
@@ -616,7 +650,24 @@ def manage_workspaces(
                 if memory_tags
                 else None
             )
-            return _json(workspace.update_workspace(name, tag_list, mem_list))
+            repo_list = (
+                [t.strip() for t in repos.split(",") if t.strip()] if repos else None
+            )
+            conv_list = (
+                [t.strip() for t in conventions.split(",") if t.strip()]
+                if conventions
+                else None
+            )
+            return _json(
+                workspace.update_workspace(
+                    name,
+                    tag_list,
+                    mem_list,
+                    description if description else None,
+                    repo_list,
+                    conv_list,
+                )
+            )
         elif operation == "delete":
             return _json(workspace.delete_workspace(name))
         return _json(
