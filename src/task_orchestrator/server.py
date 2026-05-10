@@ -225,7 +225,10 @@ def get_next_item(workspace: str = "") -> str:
 
 @mcp.tool()
 def get_context(
-    item_id: str = "", include_ancestors: bool = False, workspace: str = ""
+    item_id: str = "",
+    include_ancestors: bool = False,
+    workspace: str = "",
+    include_archived: bool = False,
 ) -> str:
     """Get context snapshot for session resume or item inspection.
 
@@ -233,6 +236,7 @@ def get_context(
     With item_id: item detail — children, notes, blockers, can_advance flag.
     Use include_ancestors=true to get the full parent chain.
     Use workspace to filter by workspace tags (e.g. workspace="dtp").
+    Use include_archived=true to include archived items in counts (excluded by default).
     Call this at session start to understand current work state.
     """
     try:
@@ -241,6 +245,7 @@ def get_context(
                 _resolve(item_id) or None,
                 include_ancestors=include_ancestors,
                 workspace=workspace or None,
+                include_archived=include_archived,
             )
         )
     except Exception as e:
@@ -511,6 +516,32 @@ def get_metrics(days: int = 30, workspace: str = "") -> str:
     """
     try:
         return _json(engine.get_metrics(days=days, workspace=workspace or None))
+    except Exception as e:
+        return _err(e)
+
+
+@mcp.tool()
+def manage_archive(
+    operation: str, workspace: str = "", archive_after_days: int = 30
+) -> str:
+    """Auto-archive completed items. Moves 'done' items older than archive_after_days to 'archived'.
+
+    Operations:
+    - run: archive eligible items (done status, older than archive_after_days)
+    - stats: return count of archived items and eligible items
+    - list: return all archived items (with optional workspace filter)
+    """
+    try:
+        ws = workspace or None
+        if operation == "run":
+            return _json(engine.archive_items(workspace=ws, days=archive_after_days))
+        elif operation == "stats":
+            return _json(engine.archive_stats(workspace=ws, days=archive_after_days))
+        elif operation == "list":
+            return _json(engine.archive_list(workspace=ws))
+        return _json(
+            {"error": f"Invalid operation: {operation}. Use: run, stats, list"}
+        )
     except Exception as e:
         return _err(e)
 
