@@ -55,7 +55,7 @@ function initSortable() {
                 fetch('/board/move', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-                    body: `item_id=${encodeURIComponent(itemId)}&new_status=${encodeURIComponent(newStatus)}&workspace=${encodeURIComponent(workspace)}`
+                    body: new URLSearchParams({item_id: itemId, new_status: newStatus, workspace: workspace})
                 }).then(r => r.text()).then(html => {
                     const tmp = document.createElement('div');
                     tmp.innerHTML = html;
