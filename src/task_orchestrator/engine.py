@@ -1441,26 +1441,68 @@ def get_metrics(days: int = 30, workspace: str | None = None) -> dict:
 # --- Export / Import ---
 
 
-def export_graph() -> dict:
-    """Export all items, notes, and dependencies as a JSON-serializable dict."""
+def export_graph(workspace: str | None = None, tags: list[str] | None = None) -> dict:
+    """Export items, notes, and dependencies as a JSON-serializable dict.
+
+    If workspace provided: filter items by workspace tags.
+    If tags provided (and no workspace): filter items where any tag matches.
+    No params = export all (backward compatible).
+    Notes and deps are filtered to only include those related to exported items.
+    """
     conn = get_connection()
     try:
-        items = [
-            _row_to_dict(r) for r in conn.execute("SELECT * FROM work_items").fetchall()
-        ]
-        notes = [
-            _row_to_dict(r) for r in conn.execute("SELECT * FROM notes").fetchall()
-        ]
-        deps = [
-            _row_to_dict(r)
-            for r in conn.execute("SELECT * FROM dependencies").fetchall()
-        ]
+        if workspace:
+            ws_clause, ws_params = _workspace_tag_filter(workspace)
+            items = [
+                _row_to_dict(r)
+                for r in conn.execute(
+                    f"SELECT * FROM work_items WHERE {ws_clause}", ws_params
+                ).fetchall()
+            ]
+        elif tags:
+            tag_clauses = " OR ".join("tags LIKE ?" for _ in tags)
+            tag_params = [f"%{t}%" for t in tags]
+            items = [
+                _row_to_dict(r)
+                for r in conn.execute(
+                    f"SELECT * FROM work_items WHERE {tag_clauses}", tag_params
+                ).fetchall()
+            ]
+        else:
+            items = [
+                _row_to_dict(r)
+                for r in conn.execute("SELECT * FROM work_items").fetchall()
+            ]
+
+        item_ids = {i["id"] for i in items}
+
+        if workspace or tags:
+            # Filter notes and deps to only exported items
+            notes = [
+                _row_to_dict(r)
+                for r in conn.execute("SELECT * FROM notes").fetchall()
+                if r["item_id"] in item_ids
+            ]
+            deps = [
+                _row_to_dict(r)
+                for r in conn.execute("SELECT * FROM dependencies").fetchall()
+                if r["from_id"] in item_ids and r["to_id"] in item_ids
+            ]
+        else:
+            notes = [
+                _row_to_dict(r) for r in conn.execute("SELECT * FROM notes").fetchall()
+            ]
+            deps = [
+                _row_to_dict(r)
+                for r in conn.execute("SELECT * FROM dependencies").fetchall()
+            ]
+
         return {
             "items": items,
             "notes": notes,
             "dependencies": deps,
             "exported_at": _now(),
-            "version": "0.7.0",
+            "version": "0.8.0",
         }
     finally:
         conn.close()
