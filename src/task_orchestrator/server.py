@@ -7,6 +7,7 @@ from .engine import ToolError
 from .schemas import get_schemas, load_schemas, get_schema_for_item
 from .prompts import register_prompts
 from . import workspace
+from . import checkpoints
 
 mcp = FastMCP(
     "task-orchestrator",
@@ -515,14 +516,19 @@ def get_metrics(days: int = 30, workspace: str = "") -> str:
 
 
 @mcp.tool()
-def export_graph() -> str:
+def export_graph(workspace: str = "", tags: str = "") -> str:
     """Export the entire work graph (items, notes, dependencies) as JSON.
 
     Returns a JSON object with items, notes, dependencies, exported_at timestamp, and version.
     Use import_graph to restore from this export.
+    workspace: filter items by workspace name (uses workspace tag config).
+    tags: comma-separated tag list to filter items (ignored if workspace is set).
+    No params = export all (backward compatible).
     """
     try:
-        return _json(engine.export_graph())
+        ws = workspace or None
+        tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
+        return _json(engine.export_graph(workspace=ws, tags=tag_list))
     except Exception as e:
         return _err(e)
 
@@ -538,6 +544,43 @@ def import_graph(data_json: str, mode: str = "merge") -> str:
     try:
         data = json.loads(data_json)
         return _json(engine.import_graph(data, mode=mode))
+    except Exception as e:
+        return _err(e)
+
+
+@mcp.tool()
+def manage_checkpoints(operation: str, path: str = "", output_dir: str = "") -> str:
+    """Manage checkpoint snapshots for backup and multi-machine sync.
+
+    Operations: create, list, restore, verify.
+    create: export current graph to a timestamped JSON file. Optional output_dir.
+    list: list available checkpoint files. Optional output_dir.
+    restore: restore graph from a checkpoint file (requires path).
+    verify: run PRAGMA integrity_check on the database.
+    """
+    try:
+        if operation == "create":
+            out = output_dir or None
+            filepath = checkpoints.create_checkpoint(output_dir=out)
+            return _json({"created": filepath})
+        elif operation == "list":
+            out = output_dir or None
+            files = checkpoints.list_checkpoints(output_dir=out)
+            return _json({"checkpoints": files})
+        elif operation == "restore":
+            if not path:
+                return _err(ValueError("path is required for restore operation"))
+            result = checkpoints.restore_checkpoint(path)
+            return _json({"restored": result, "from": path})
+        elif operation == "verify":
+            ok = checkpoints.verify_db_integrity()
+            return _json({"ok": ok})
+        else:
+            return _err(
+                ValueError(
+                    f"Invalid operation: {operation}. Valid: create, list, restore, verify"
+                )
+            )
     except Exception as e:
         return _err(e)
 
