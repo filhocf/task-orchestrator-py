@@ -9,7 +9,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from ..engine import advance_item, get_item, query_items, ToolError
+from ..engine import advance_item, get_dependencies, get_item, query_items, ToolError
 from ..workspace import list_workspaces
 
 app = FastAPI(title="Task Orchestrator Kanban")
@@ -148,6 +148,42 @@ def move_item(
         )
         parts.append(html.body.decode())
     return HTMLResponse("".join(parts))
+
+
+@app.get("/timeline/{workspace}", response_class=HTMLResponse)
+def timeline(request: Request, workspace: str):
+    ws = None if workspace == "_all" else workspace
+    ws_config = list_workspaces().get(ws) if ws else None
+
+    # Get all non-done items for the workspace
+    items = []
+    for status in ("queue", "work", "review", "blocked"):
+        if ws and ws_config:
+            tags = ",".join(ws_config["tags"])
+            items.extend(query_items(status=status, tags=tags, limit=500))
+        else:
+            items.extend(query_items(status=status, limit=500))
+
+    # Collect dependencies for all items
+    deps = []
+    item_ids = {i["id"] for i in items}
+    for item in items:
+        d = get_dependencies(item["id"], direction="outbound")
+        for edge in d["blocks"]:
+            if edge["to_id"] in item_ids:
+                deps.append({"from_id": edge["from_id"], "to_id": edge["to_id"]})
+
+    return templates.TemplateResponse(
+        request,
+        "timeline.html",
+        {
+            "workspace": workspace,
+            "workspaces": list_workspaces(),
+            "items": items,
+            "deps": deps,
+            "priority_emoji": PRIORITY_EMOJI,
+        },
+    )
 
 
 @app.get("/workspaces")

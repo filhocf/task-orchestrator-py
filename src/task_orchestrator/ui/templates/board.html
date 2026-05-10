@@ -3,7 +3,8 @@
 <div class="p-4">
     <!-- Workspace tabs -->
     <div class="flex items-center gap-2 mb-4">
-        <h1 class="text-xl font-bold mr-4">📋 Kanban</h1>
+        <h1 class="text-xl font-bold mr-2 text-blue-400">📋 Kanban</h1>
+        <a href="/timeline/{{ workspace }}" class="text-xl font-bold mr-4 hover:text-blue-400">⏱ Timeline</a>
         <a href="/board/_all"
            class="px-3 py-1 rounded text-sm {% if workspace == '_all' %}bg-blue-600{% else %}bg-gray-700 hover:bg-gray-600{% endif %}">
             All
