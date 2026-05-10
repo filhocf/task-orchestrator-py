@@ -150,6 +150,53 @@ def move_item(
     return HTMLResponse("".join(parts))
 
 
+@app.get("/timeline/{workspace}", response_class=HTMLResponse)
+def timeline(request: Request, workspace: str):
+    workspaces = list_workspaces()
+    ws = None if workspace == "_all" else workspace
+    ws_config = workspaces.get(ws) if ws else None
+
+    # Get all non-done items for the workspace
+    items = []
+    for status in ("queue", "work", "review", "blocked"):
+        if ws and ws_config:
+            tags = ",".join(ws_config["tags"])
+            items.extend(query_items(status=status, tags=tags, limit=500))
+        else:
+            items.extend(query_items(status=status, limit=500))
+
+    # Batch query dependencies (avoid N+1)
+    deps = []
+    if items:
+        item_ids = {i["id"] for i in items}
+        from ..db import get_connection
+
+        conn = get_connection()
+        try:
+            placeholders = ",".join("?" * len(item_ids))
+            rows = conn.execute(
+                f"SELECT from_id, to_id FROM dependencies WHERE from_id IN ({placeholders})",
+                list(item_ids),
+            ).fetchall()
+            for r in rows:
+                if r["to_id"] in item_ids:
+                    deps.append({"from_id": r["from_id"], "to_id": r["to_id"]})
+        finally:
+            conn.close()
+
+    return templates.TemplateResponse(
+        request,
+        "timeline.html",
+        {
+            "workspace": workspace,
+            "workspaces": workspaces,
+            "items": items,
+            "deps": deps,
+            "priority_emoji": PRIORITY_EMOJI,
+        },
+    )
+
+
 @app.get("/workspaces")
 def get_workspaces():
     return list_workspaces()

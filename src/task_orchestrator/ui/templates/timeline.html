@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="p-4">
+    <!-- Nav tabs -->
+    <div class="flex items-center gap-2 mb-4">
+        <a href="/board/{{ workspace }}" class="text-xl font-bold mr-2 hover:text-blue-400">📋 Kanban</a>
+        <span class="text-xl font-bold mr-4 text-blue-400">⏱ Timeline</span>
+        <a href="/timeline/_all"
+           class="px-3 py-1 rounded text-sm {% if workspace == '_all' %}bg-blue-600{% else %}bg-gray-700 hover:bg-gray-600{% endif %}">
+            All
+        </a>
+        {% for ws_name in workspaces %}
+        <a href="/timeline/{{ ws_name }}"
+           class="px-3 py-1 rounded text-sm {% if workspace == ws_name %}bg-blue-600{% else %}bg-gray-700 hover:bg-gray-600{% endif %}">
+            {{ ws_name }}
+        </a>
+        {% endfor %}
+    </div>
+
+    <!-- Legend -->
+    <div class="flex gap-4 mb-3 text-xs text-gray-400">
+        <span>🔴 critical</span>
+        <span>🟠 high</span>
+        <span>🔵 medium</span>
+        <span>⚪ low</span>
+        <span class="ml-4">■ queue</span>
+        <span class="text-yellow-400">■ work</span>
+        <span class="text-purple-400">■ review</span>
+        <span class="text-red-400">■ blocked</span>
+    </div>
+
+    <!-- Timeline container -->
+    <div class="bg-gray-800 rounded-lg p-4 overflow-x-auto" id="timeline-container">
+        <svg id="timeline-svg" class="w-full" style="min-width: 900px;"></svg>
+    </div>
+
+    {% if not items %}
+    <p class="text-gray-500 mt-4 text-center">No active items to display.</p>
+    {% endif %}
+</div>
+
+<script>
+const items = {{ items | tojson }};
+const deps = {{ deps | tojson }};
+
+const STATUS_COLORS = {
+    queue: '#6b7280',
+    work: '#eab308',
+    review: '#a855f7',
+    blocked: '#ef4444',
+    done: '#22c55e'
+};
+const PRIORITY_ORDER = {critical: 0, high: 1, medium: 2, low: 3};
+
+if (items.length > 0) {
+    // Sort: by priority then created_at
+    items.sort((a, b) => {
+        const pa = PRIORITY_ORDER[a.priority] ?? 3;
+        const pb = PRIORITY_ORDER[b.priority] ?? 3;
+        if (pa !== pb) return pa - pb;
+        return (a.created_at || '').localeCompare(b.created_at || '');
+    });
+
+    // Time range (guard against future dates and zero range)
+    const now = new Date();
+    const dates = items.map(i => new Date(i.created_at));
+    const minDate = new Date(Math.min(...dates));
+    const totalMs = Math.max(now - minDate, 3600000); // min 1 hour
+
+    // Layout
+    const ROW_H = 32;
+    const PAD_TOP = 30;
+    const PAD_LEFT = 10;
+    const PAD_RIGHT = 40;
+    const BAR_H = 20;
+    const svgW = 900;
+    const svgH = PAD_TOP + items.length * ROW_H + 20;
+    const barArea = svgW - PAD_LEFT - PAD_RIGHT;
+
+    const svg = document.getElementById('timeline-svg');
+    svg.setAttribute('viewBox', `0 0 ${svgW} ${svgH}`);
+    svg.setAttribute('height', svgH);
+
+    // Build SVG content as array, then set innerHTML once
+    const parts = [`
+        <defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5"
+                    markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="#60a5fa"/>
+            </marker>
+        </defs>
+    `];
+
+    // Time axis labels
+    const axisDays = Math.ceil(totalMs / 86400000);
+    const tickCount = Math.max(Math.min(axisDays, 10), 1);
+    for (let i = 0; i <= tickCount; i++) {
+        const x = PAD_LEFT + (barArea * i / tickCount);
+        const d = new Date(minDate.getTime() + (totalMs * i / tickCount));
+        const label = `${d.getMonth()+1}/${d.getDate()}`;
+        parts.push(`<text x="${x}" y="14" fill="#9ca3af" font-size="10">${label}</text>`);
+        parts.push(`<line x1="${x}" y1="20" x2="${x}" y2="${svgH}" stroke="#374151" stroke-width="0.5"/>`);
+    }
+
+    // Item index map for dep arrows
+    const idxMap = {};
+    items.forEach((item, i) => { idxMap[item.id] = i; });
+
+    // Draw bars
+    items.forEach((item, i) => {
+        const created = new Date(item.created_at);
+        const elapsed = Math.max(created - minDate, 0);
+        const x1 = PAD_LEFT + (elapsed / totalMs) * barArea;
+        const x2 = PAD_LEFT + barArea;
+        const y = PAD_TOP + i * ROW_H;
+        const color = STATUS_COLORS[item.status] || '#6b7280';
+        const barW = Math.max(x2 - x1, 4);
+
+        parts.push(`<rect x="${x1}" y="${y}" width="${barW}" height="${BAR_H}" 
+            rx="3" fill="${color}" opacity="0.7">
+            <title>${item.title} [${item.status}] (${item.priority})</title>
+        </rect>`);
+
+        // Label (truncated, clamped to avoid negative slice)
+        const maxChars = Math.max(Math.floor(barW / 6), 0);
+        let label = '';
+        if (maxChars > 2) {
+            label = item.title.length > maxChars ? item.title.slice(0, maxChars - 1) + '…' : item.title;
+        }
+        if (label) {
+            parts.push(`<text x="${x1 + 4}" y="${y + 14}" fill="white" font-size="11" 
+                pointer-events="none">${label}</text>`);
+        }
+    });
+
+    // Draw dependency arrows
+    deps.forEach(dep => {
+        const fromIdx = idxMap[dep.from_id];
+        const toIdx = idxMap[dep.to_id];
+        if (fromIdx === undefined || toIdx === undefined) return;
+
+        const fromY = PAD_TOP + fromIdx * ROW_H + BAR_H / 2;
+        const toY = PAD_TOP + toIdx * ROW_H + BAR_H / 2;
+        // Arrow starts at right edge of the "from" bar
+        const fromX = PAD_LEFT + barArea - 5;
+        // Arrow ends at left edge of the "to" bar
+        const toCreated = new Date(items[toIdx].created_at);
+        const toElapsed = Math.max(toCreated - minDate, 0);
+        const toX = PAD_LEFT + (toElapsed / totalMs) * barArea;
+
+        const midX = fromX + 15;
+        parts.push(`<path d="M${fromX},${fromY} C${midX},${fromY} ${midX},${toY} ${toX},${toY}" 
+            fill="none" stroke="#60a5fa" stroke-width="1.5" marker-end="url(#arrow)" opacity="0.6"/>`);
+    });
+
+    // Single DOM update
+    svg.innerHTML = parts.join('');
+}
+</script>
+{% endblock %}
