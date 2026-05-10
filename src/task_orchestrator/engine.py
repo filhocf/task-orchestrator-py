@@ -22,7 +22,7 @@ from croniter import croniter, CroniterBadCronError
 
 from .workspace import get_workspace_tags, get_workspace_config
 
-VALID_STATUSES = {"queue", "work", "review", "done", "blocked", "cancelled"}
+VALID_STATUSES = {"queue", "work", "review", "done", "blocked", "cancelled", "archived"}
 
 
 class ToolError(Exception):
@@ -70,7 +70,7 @@ def resolve_short_id(prefix: str) -> str:
         conn.close()
 
 
-TERMINAL = {"done", "cancelled"}
+TERMINAL = {"done", "cancelled", "archived"}
 PRIORITIES = {"critical", "high", "medium", "low"}
 PRIORITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 
@@ -85,6 +85,7 @@ TRANSITIONS = {
         "blocked": "cancelled",
     },
     "reopen": {"done": "queue", "cancelled": "queue"},
+    "archive": {"done": "archived"},
 }
 
 
@@ -737,6 +738,7 @@ def _get_unsatisfied_blockers(conn, item_id: str) -> list[dict]:
         "review": 2,
         "done": 3,
         "cancelled": 3,
+        "archived": 3,
         "blocked": 0,
     }
     rows = conn.execute(
@@ -869,6 +871,7 @@ def get_context(
     item_id: str | None = None,
     include_ancestors: bool = False,
     workspace: str | None = None,
+    include_archived: bool = False,
 ) -> dict:
     conn = get_connection()
     try:
@@ -913,12 +916,21 @@ def get_context(
             return result
         # Global context
         ws_clause, ws_params = _workspace_tag_filter(workspace)
-        ws_where = f"WHERE {ws_clause}" if ws_clause else ""
         ws_and = f"AND {ws_clause}" if ws_clause else ""
+
+        # Combine workspace + archived filters for WHERE clause
+        if ws_clause and not include_archived:
+            combined_where = f"WHERE {ws_clause} AND status != 'archived'"
+        elif ws_clause:
+            combined_where = f"WHERE {ws_clause}"
+        elif not include_archived:
+            combined_where = "WHERE status != 'archived'"
+        else:
+            combined_where = ""
 
         counts = {}
         for row in conn.execute(
-            f"SELECT status, COUNT(*) as cnt FROM work_items {ws_where} GROUP BY status",
+            f"SELECT status, COUNT(*) as cnt FROM work_items {combined_where} GROUP BY status",
             ws_params,
         ).fetchall():
             counts[row["status"]] = row["cnt"]
@@ -1351,9 +1363,9 @@ def get_metrics(days: int = 30, workspace: str | None = None) -> dict:
         cutoff = (now_dt - timedelta(days=days)).isoformat()
         stale_cutoff = (now_dt - timedelta(days=7)).isoformat()
 
-        # Throughput per week (done items in period, grouped by ISO week)
+        # Throughput per week (done+archived items in period, grouped by ISO week)
         rows = conn.execute(
-            f"SELECT updated_at FROM work_items WHERE status='done' AND updated_at >= ? {ws_and}",
+            f"SELECT updated_at FROM work_items WHERE status IN ('done','archived') AND updated_at >= ? {ws_and}",
             [cutoff] + ws_params,
         ).fetchall()
         week_counts: dict[str, int] = {}
@@ -1364,9 +1376,9 @@ def get_metrics(days: int = 30, workspace: str | None = None) -> dict:
             week_counts[key] = week_counts.get(key, 0) + 1
         throughput = [{"week": w, "count": c} for w, c in sorted(week_counts.items())]
 
-        # Lead time avg (done items in period)
+        # Lead time avg (done+archived items in period)
         lt_rows = conn.execute(
-            f"SELECT created_at, updated_at FROM work_items WHERE status='done' AND updated_at >= ? {ws_and}",
+            f"SELECT created_at, updated_at FROM work_items WHERE status IN ('done','archived') AND updated_at >= ? {ws_and}",
             [cutoff] + ws_params,
         ).fetchall()
         if lt_rows:
@@ -1388,11 +1400,11 @@ def get_metrics(days: int = 30, workspace: str | None = None) -> dict:
 
         # Stale ratio
         non_terminal = conn.execute(
-            f"SELECT COUNT(*) as cnt FROM work_items WHERE status NOT IN ('done','cancelled') {ws_and}",
+            f"SELECT COUNT(*) as cnt FROM work_items WHERE status NOT IN ('done','cancelled','archived') {ws_and}",
             ws_params,
         ).fetchone()["cnt"]
         stale = conn.execute(
-            f"SELECT COUNT(*) as cnt FROM work_items WHERE status NOT IN ('done','cancelled') AND updated_at < ? {ws_and}",
+            f"SELECT COUNT(*) as cnt FROM work_items WHERE status NOT IN ('done','cancelled','archived') AND updated_at < ? {ws_and}",
             [stale_cutoff] + ws_params,
         ).fetchone()["cnt"]
         stale_ratio = (stale / non_terminal * 100) if non_terminal else 0.0
@@ -1400,7 +1412,7 @@ def get_metrics(days: int = 30, workspace: str | None = None) -> dict:
         # By priority (done in period)
         by_priority = {"critical": 0, "high": 0, "medium": 0, "low": 0}
         for r in conn.execute(
-            f"SELECT priority, COUNT(*) as cnt FROM work_items WHERE status='done' AND updated_at >= ? {ws_and} GROUP BY priority",
+            f"SELECT priority, COUNT(*) as cnt FROM work_items WHERE status IN ('done','archived') AND updated_at >= ? {ws_and} GROUP BY priority",
             [cutoff] + ws_params,
         ).fetchall():
             if r["priority"] in by_priority:
@@ -1409,7 +1421,7 @@ def get_metrics(days: int = 30, workspace: str | None = None) -> dict:
         # By tag (top 10 tags across non-terminal items)
         tag_counts: dict[str, int] = {}
         for r in conn.execute(
-            f"SELECT tags FROM work_items WHERE status NOT IN ('done','cancelled') AND tags != '' {ws_and}",
+            f"SELECT tags FROM work_items WHERE status NOT IN ('done','cancelled','archived') AND tags != '' {ws_and}",
             ws_params,
         ).fetchall():
             for tag in r["tags"].split(","):
@@ -1434,6 +1446,79 @@ def get_metrics(days: int = 30, workspace: str | None = None) -> dict:
             "total_items": total,
             "period_days": days,
         }
+    finally:
+        conn.close()
+
+
+# --- Archive ---
+
+
+def archive_items(workspace: str | None = None, days: int = 30) -> dict:
+    """Move items in 'done' status older than `days` to 'archived'."""
+    conn = get_connection()
+    try:
+        now_dt = datetime.now(timezone.utc)
+        cutoff = (now_dt - timedelta(days=days)).isoformat()
+        ws_clause, ws_params = _workspace_tag_filter(workspace)
+        ws_and = f" AND {ws_clause}" if ws_clause else ""
+
+        rows = conn.execute(
+            f"SELECT id FROM work_items WHERE status='done' AND updated_at < ? {ws_and}",
+            [cutoff] + ws_params,
+        ).fetchall()
+
+        now = _now()
+        ids = [r["id"] for r in rows]
+        for item_id in ids:
+            conn.execute(
+                "UPDATE work_items SET status='archived', role_changed_at=?, updated_at=? WHERE id=?",
+                (now, now, item_id),
+            )
+        conn.commit()
+        return {"archived_count": len(ids), "archived_ids": ids}
+    finally:
+        conn.close()
+
+
+def archive_stats(workspace: str | None = None, days: int = 30) -> dict:
+    """Return count of archived items and items eligible for archiving."""
+    conn = get_connection()
+    try:
+        ws_clause, ws_params = _workspace_tag_filter(workspace)
+        ws_and = f" AND {ws_clause}" if ws_clause else ""
+
+        archived_count = conn.execute(
+            f"SELECT COUNT(*) as cnt FROM work_items WHERE status='archived' {ws_and}",
+            ws_params,
+        ).fetchone()["cnt"]
+
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        eligible_count = conn.execute(
+            f"SELECT COUNT(*) as cnt FROM work_items WHERE status='done' AND updated_at < ? {ws_and}",
+            [cutoff] + ws_params,
+        ).fetchone()["cnt"]
+
+        return {
+            "archived_count": archived_count,
+            "eligible_count": eligible_count,
+            "archive_after_days": days,
+        }
+    finally:
+        conn.close()
+
+
+def archive_list(workspace: str | None = None) -> list[dict]:
+    """Return all archived items, optionally filtered by workspace."""
+    conn = get_connection()
+    try:
+        ws_clause, ws_params = _workspace_tag_filter(workspace)
+        ws_and = f" AND {ws_clause}" if ws_clause else ""
+
+        rows = conn.execute(
+            f"SELECT * FROM work_items WHERE status='archived' {ws_and} ORDER BY updated_at DESC",
+            ws_params,
+        ).fetchall()
+        return [_row_to_dict(r) for r in rows]
     finally:
         conn.close()
 
