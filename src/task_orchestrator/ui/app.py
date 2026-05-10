@@ -9,7 +9,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from ..engine import advance_item, get_dependencies, get_item, query_items, ToolError
+from ..engine import advance_item, get_item, query_items, ToolError
 from ..workspace import list_workspaces
 
 app = FastAPI(title="Task Orchestrator Kanban")
@@ -152,8 +152,9 @@ def move_item(
 
 @app.get("/timeline/{workspace}", response_class=HTMLResponse)
 def timeline(request: Request, workspace: str):
+    workspaces = list_workspaces()
     ws = None if workspace == "_all" else workspace
-    ws_config = list_workspaces().get(ws) if ws else None
+    ws_config = workspaces.get(ws) if ws else None
 
     # Get all non-done items for the workspace
     items = []
@@ -164,21 +165,31 @@ def timeline(request: Request, workspace: str):
         else:
             items.extend(query_items(status=status, limit=500))
 
-    # Collect dependencies for all items
+    # Batch query dependencies (avoid N+1)
     deps = []
-    item_ids = {i["id"] for i in items}
-    for item in items:
-        d = get_dependencies(item["id"], direction="outbound")
-        for edge in d["blocks"]:
-            if edge["to_id"] in item_ids:
-                deps.append({"from_id": edge["from_id"], "to_id": edge["to_id"]})
+    if items:
+        item_ids = {i["id"] for i in items}
+        from ..db import get_connection
+
+        conn = get_connection()
+        try:
+            placeholders = ",".join("?" * len(item_ids))
+            rows = conn.execute(
+                f"SELECT from_id, to_id FROM dependencies WHERE from_id IN ({placeholders})",
+                list(item_ids),
+            ).fetchall()
+            for r in rows:
+                if r["to_id"] in item_ids:
+                    deps.append({"from_id": r["from_id"], "to_id": r["to_id"]})
+        finally:
+            conn.close()
 
     return templates.TemplateResponse(
         request,
         "timeline.html",
         {
             "workspace": workspace,
-            "workspaces": list_workspaces(),
+            "workspaces": workspaces,
             "items": items,
             "deps": deps,
             "priority_emoji": PRIORITY_EMOJI,

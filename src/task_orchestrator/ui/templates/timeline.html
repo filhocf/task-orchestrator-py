@@ -61,11 +61,11 @@ if (items.length > 0) {
         return (a.created_at || '').localeCompare(b.created_at || '');
     });
 
-    // Time range
+    // Time range (guard against future dates and zero range)
     const now = new Date();
     const dates = items.map(i => new Date(i.created_at));
     const minDate = new Date(Math.min(...dates));
-    const totalMs = now - minDate || 1;
+    const totalMs = Math.max(now - minDate, 3600000); // min 1 hour
 
     // Layout
     const ROW_H = 32;
@@ -81,25 +81,25 @@ if (items.length > 0) {
     svg.setAttribute('viewBox', `0 0 ${svgW} ${svgH}`);
     svg.setAttribute('height', svgH);
 
-    // Defs for arrow marker
-    svg.innerHTML = `
+    // Build SVG content as array, then set innerHTML once
+    const parts = [`
         <defs>
             <marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5"
                     markerWidth="6" markerHeight="6" orient="auto-start-reverse">
                 <path d="M 0 0 L 10 5 L 0 10 z" fill="#60a5fa"/>
             </marker>
         </defs>
-    `;
+    `];
 
     // Time axis labels
     const axisDays = Math.ceil(totalMs / 86400000);
-    const tickCount = Math.min(axisDays, 10);
+    const tickCount = Math.max(Math.min(axisDays, 10), 1);
     for (let i = 0; i <= tickCount; i++) {
         const x = PAD_LEFT + (barArea * i / tickCount);
         const d = new Date(minDate.getTime() + (totalMs * i / tickCount));
         const label = `${d.getMonth()+1}/${d.getDate()}`;
-        svg.innerHTML += `<text x="${x}" y="14" fill="#9ca3af" font-size="10">${label}</text>`;
-        svg.innerHTML += `<line x1="${x}" y1="20" x2="${x}" y2="${svgH}" stroke="#374151" stroke-width="0.5"/>`;
+        parts.push(`<text x="${x}" y="14" fill="#9ca3af" font-size="10">${label}</text>`);
+        parts.push(`<line x1="${x}" y1="20" x2="${x}" y2="${svgH}" stroke="#374151" stroke-width="0.5"/>`);
     }
 
     // Item index map for dep arrows
@@ -109,23 +109,28 @@ if (items.length > 0) {
     // Draw bars
     items.forEach((item, i) => {
         const created = new Date(item.created_at);
-        const x1 = PAD_LEFT + ((created - minDate) / totalMs) * barArea;
-        const x2 = PAD_LEFT + barArea; // extends to now
+        const elapsed = Math.max(created - minDate, 0);
+        const x1 = PAD_LEFT + (elapsed / totalMs) * barArea;
+        const x2 = PAD_LEFT + barArea;
         const y = PAD_TOP + i * ROW_H;
         const color = STATUS_COLORS[item.status] || '#6b7280';
         const barW = Math.max(x2 - x1, 4);
 
-        // Bar
-        svg.innerHTML += `<rect x="${x1}" y="${y}" width="${barW}" height="${BAR_H}" 
+        parts.push(`<rect x="${x1}" y="${y}" width="${barW}" height="${BAR_H}" 
             rx="3" fill="${color}" opacity="0.7">
             <title>${item.title} [${item.status}] (${item.priority})</title>
-        </rect>`;
+        </rect>`);
 
-        // Label (truncated)
-        const maxChars = Math.floor(barW / 6);
-        const label = item.title.length > maxChars ? item.title.slice(0, maxChars-1) + '…' : item.title;
-        svg.innerHTML += `<text x="${x1 + 4}" y="${y + 14}" fill="white" font-size="11" 
-            pointer-events="none">${label}</text>`;
+        // Label (truncated, clamped to avoid negative slice)
+        const maxChars = Math.max(Math.floor(barW / 6), 0);
+        let label = '';
+        if (maxChars > 2) {
+            label = item.title.length > maxChars ? item.title.slice(0, maxChars - 1) + '…' : item.title;
+        }
+        if (label) {
+            parts.push(`<text x="${x1 + 4}" y="${y + 14}" fill="white" font-size="11" 
+                pointer-events="none">${label}</text>`);
+        }
     });
 
     // Draw dependency arrows
@@ -136,16 +141,20 @@ if (items.length > 0) {
 
         const fromY = PAD_TOP + fromIdx * ROW_H + BAR_H / 2;
         const toY = PAD_TOP + toIdx * ROW_H + BAR_H / 2;
-        const fromCreated = new Date(items[fromIdx].created_at);
-        const fromX = PAD_LEFT + ((fromCreated - minDate) / totalMs) * barArea + barArea * 0.95;
+        // Arrow starts at right edge of the "from" bar
+        const fromX = PAD_LEFT + barArea - 5;
+        // Arrow ends at left edge of the "to" bar
         const toCreated = new Date(items[toIdx].created_at);
-        const toX = PAD_LEFT + ((toCreated - minDate) / totalMs) * barArea;
+        const toElapsed = Math.max(toCreated - minDate, 0);
+        const toX = PAD_LEFT + (toElapsed / totalMs) * barArea;
 
-        // Curved arrow
-        const midX = (fromX + toX) / 2 + 20;
-        svg.innerHTML += `<path d="M${fromX},${fromY} C${midX},${fromY} ${midX},${toY} ${toX},${toY}" 
-            fill="none" stroke="#60a5fa" stroke-width="1.5" marker-end="url(#arrow)" opacity="0.6"/>`;
+        const midX = fromX + 15;
+        parts.push(`<path d="M${fromX},${fromY} C${midX},${fromY} ${midX},${toY} ${toX},${toY}" 
+            fill="none" stroke="#60a5fa" stroke-width="1.5" marker-end="url(#arrow)" opacity="0.6"/>`);
     });
+
+    // Single DOM update
+    svg.innerHTML = parts.join('');
 }
 </script>
 {% endblock %}
