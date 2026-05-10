@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="p-4">
+    <!-- Workspace tabs -->
+    <div class="flex items-center gap-2 mb-4">
+        <h1 class="text-xl font-bold mr-4">📋 Kanban</h1>
+        <a href="/board/_all"
+           class="px-3 py-1 rounded text-sm {% if workspace == '_all' %}bg-blue-600{% else %}bg-gray-700 hover:bg-gray-600{% endif %}">
+            All
+        </a>
+        {% for ws_name in workspaces %}
+        <a href="/board/{{ ws_name }}"
+           class="px-3 py-1 rounded text-sm {% if workspace == ws_name %}bg-blue-600{% else %}bg-gray-700 hover:bg-gray-600{% endif %}">
+            {{ ws_name }}
+        </a>
+        {% endfor %}
+    </div>
+
+    <!-- Board columns -->
+    <div class="grid grid-cols-4 gap-4" id="board">
+        {% for status in statuses %}
+        <div class="bg-gray-800 rounded-lg p-3 min-h-[70vh]">
+            <h2 class="text-sm font-semibold uppercase text-gray-400 mb-3 flex justify-between">
+                {{ status }}
+                <span class="bg-gray-700 px-2 rounded-full text-xs">{{ columns[status]|length }}</span>
+            </h2>
+            <div class="kanban-column space-y-2" data-status="{{ status }}" id="col-{{ status }}">
+                {% for item in columns[status] %}
+                {% include "partials/card.html" %}
+                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+<script>
+document.querySelectorAll('.kanban-column').forEach(col => {
+    new Sortable(col, {
+        group: 'kanban',
+        animation: 150,
+        ghostClass: 'sortable-ghost',
+        onEnd: function(evt) {
+            const itemId = evt.item.dataset.id;
+            const newStatus = evt.to.dataset.status;
+            const workspace = '{{ workspace }}';
+
+            fetch('/board/move', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                body: `item_id=${itemId}&new_status=${newStatus}&workspace=${workspace}`
+            }).then(r => r.text()).then(html => {
+                // Refresh all columns
+                const tmp = document.createElement('div');
+                tmp.innerHTML = html;
+                const newCols = tmp.querySelectorAll('[data-status]');
+                newCols.forEach(newCol => {
+                    const status = newCol.dataset.status;
+                    const existing = document.getElementById('col-' + status);
+                    if (existing) {
+                        existing.parentElement.querySelector('span').textContent = newCol.querySelectorAll('.card').length;
+                        existing.innerHTML = newCol.innerHTML;
+                    }
+                });
+                // Re-init sortable
+                document.querySelectorAll('.kanban-column').forEach(c => {
+                    new Sortable(c, {
+                        group: 'kanban',
+                        animation: 150,
+                        ghostClass: 'sortable-ghost',
+                        onEnd: arguments.callee
+                    });
+                });
+            });
+        }
+    });
+});
+</script>
+{% endblock %}

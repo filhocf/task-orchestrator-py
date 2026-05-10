@@ -1,0 +1,16 @@
+<div class="card bg-gray-750 border border-gray-700 rounded p-2 cursor-move hover:border-gray-500 transition-colors"
+     data-id="{{ item.id }}" draggable="true"
+     style="background-color: rgb(40, 44, 52);">
+    <div class="flex justify-between items-start">
+        <span class="font-medium text-sm truncate max-w-[80%]">{{ item.title }}</span>
+        <span class="text-sm" title="{{ item.priority }}">{{ item.priority_emoji }}</span>
+    </div>
+    {% if item.tags %}
+    <div class="flex flex-wrap gap-1 mt-1">
+        {% for tag in item.tags.split(',') if tag.strip() %}
+        <span class="text-xs bg-gray-700 text-gray-300 px-1.5 rounded">{{ tag.strip() }}</span>
+        {% endfor %}
+    </div>
+    {% endif %}
+    <div class="text-xs text-gray-400 mt-1">{{ item.age }}d ago</div>
+</div>
