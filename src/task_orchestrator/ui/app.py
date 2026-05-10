@@ -9,7 +9,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from ..engine import advance_item, query_items, ToolError
+from ..engine import advance_item, get_item, query_items, ToolError
 from ..workspace import list_workspaces
 
 app = FastAPI(title="Task Orchestrator Kanban")
@@ -55,14 +55,11 @@ def _trigger_for_move(from_status: str, to_status: str) -> str | None:
 def _get_board_data(workspace: str | None) -> dict:
     """Get items grouped by status for a workspace."""
     columns = {}
+    ws_config = list_workspaces().get(workspace) if workspace else None
     for status in STATUSES:
-        if workspace:
-            ws_config = list_workspaces().get(workspace)
-            if ws_config:
-                tags = ",".join(ws_config["tags"])
-                items = query_items(status=status, tags=tags, limit=200)
-            else:
-                items = query_items(status=status, limit=200)
+        if workspace and ws_config:
+            tags = ",".join(ws_config["tags"])
+            items = query_items(status=status, tags=tags, limit=200)
         else:
             items = query_items(status=status, limit=200)
         for item in items:
@@ -119,12 +116,8 @@ def move_item(
     workspace: str = Form("_all"),
 ):
     # Determine current status
-    items = query_items(limit=500)
-    current_status = None
-    for item in items:
-        if item["id"] == item_id:
-            current_status = item["status"]
-            break
+    item = get_item(item_id)
+    current_status = item["status"] if item else None
 
     error = None
     if current_status and current_status != new_status:
