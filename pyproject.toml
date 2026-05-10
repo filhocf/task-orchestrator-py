@@ -1,6 +1,6 @@
 [project]
 name = "task-orchestrator-py"
-version = "1.0.0"
+version = "1.0.1"
 description = "Python port of jpicklyk/task-orchestrator — MCP server for AI agent work management"
 readme = "README.md"
 license = {text = "MIT"}
