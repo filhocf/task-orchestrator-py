@@ -1,0 +1,55 @@
+# task-orchestrator-py
+
+> MCP server for AI agent work management — hierarchical tasks, dependencies, workflows, and persistent notes.
+
+## Overview
+
+task-orchestrator-py is a Model Context Protocol (MCP) server that gives AI agents structured work management. Items flow through queue → work → review → done with dependency enforcement, note gates, and batch operations.
+
+## Key Concepts
+
+- Items: hierarchical work units (max 4 levels) with priority, tags, complexity
+- Workflow: trigger-based transitions (start, complete, block, cancel, reopen)
+- Dependencies: edges between items with configurable unblock_at threshold
+- Notes: keyed documentation per phase (queue/work/review) that can gate transitions
+- Schemas: YAML-defined note templates with required fields per phase
+
+## Tools (18 total)
+
+- manage_items: CRUD + batch create/delete
+- query_items: filter by status, priority, tags, search text
+- create_work_tree: atomic root + children + deps in one call
+- complete_tree: batch-complete descendants topologically
+- advance_item: trigger transitions (start/complete/block/cancel/reopen), batch support
+- get_next_status: preview transition feasibility
+- get_context: dashboard or item detail with children/notes/gates
+- get_next_item: highest-priority actionable item
+- get_blocked_items: all blocked items with reasons
+- manage_notes: upsert/delete keyed notes
+- query_notes: list notes with optional body exclusion
+- manage_dependencies: add/remove/pattern (linear, fan-out, fan-in)
+- query_dependencies: BFS traversal with depth control
+- manage_schemas: list/inspect/check gates/reload
+- get_metrics: throughput, lead time, WIP, stale ratio
+- manage_workspaces: tag-based workspace scoping
+- get_workspace_context: filtered dashboard per workspace
+- manage_archive: auto-archive old completed items
+- manage_checkpoints: backup/restore/verify
+- export_graph / import_graph: full JSON export/import
+
+## Installation
+
+```bash
+uvx task-orchestrator-py
+```
+
+## Configuration
+
+- Database: TASK_ORCHESTRATOR_DB (default: ~/.task-orchestrator/tasks.db)
+- Schemas: TASK_ORCHESTRATOR_CONFIG (default: .taskorchestrator/config.yaml)
+
+## Links
+
+- PyPI: https://pypi.org/project/task-orchestrator-py/
+- GitHub: https://github.com/filhocf/task-orchestrator-py
+- License: MIT
