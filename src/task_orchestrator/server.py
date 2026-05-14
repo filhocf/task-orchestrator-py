@@ -711,9 +711,17 @@ def manage_workspaces(
 
 
 def main():
+    import os
     db.init_db()
     register_prompts(mcp)
-    mcp.run()
+    transport = os.environ.get("MCP_TRANSPORT", "stdio")
+    if transport == "streamable-http":
+        host = os.environ.get("MCP_HOST", "127.0.0.1")
+        port = int(os.environ.get("MCP_PORT", "3201"))
+        mcp.settings.host = host
+        mcp.settings.port = port
+        mcp.settings.stateless_http = True
+    mcp.run(transport=transport)
 
 
 if __name__ == "__main__":
