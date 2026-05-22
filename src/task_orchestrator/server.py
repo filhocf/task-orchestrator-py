@@ -712,6 +712,7 @@ def manage_workspaces(
 
 def main():
     import os
+
     db.init_db()
     register_prompts(mcp)
     transport = os.environ.get("MCP_TRANSPORT", "stdio")
