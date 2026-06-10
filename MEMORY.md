@@ -2,44 +2,31 @@
 
 ## Estado Atual
 
-**Versão**: 0.8.0 (PyPI)
-**Branch principal**: main
-**CI**: GitHub Actions (ruff lint + pytest)
-**Último release**: v0.8.0 (croniter fix, datetime naive/aware)
+**Versão**: 1.1.0 (PyPI) | **Branch**: main | **Testes**: 114+
+**Transport**: StreamableHTTP porta 3201 (MCP_TRANSPORT=streamable-http) + stdio fallback
+**Deploy**: systemd service (task-orchestrator.service)
+**Tools MCP**: 22 | **CI**: GitHub Actions (ruff + pytest)
 
-## Em Andamento
+## Features Principais
 
-### v0.9.0 — Workspace-Aware Context Engine
-- Issues #24–#28 criadas no GitHub (09/mai/2026)
-- Milestone criado
-- Labels: workspace, context-engine, resilience
-- Ordem: #24 (entity) + #28 (resilience) paralelos → #25 (scoped queries) → #27 (memory bridge) → #26 (workspace context)
-- Nenhuma implementação iniciada ainda
-
-### v1.0.0 — Kanban Web UI
-- Issues #29–#31 criadas
-- Depende de v0.9.0 (workspace entity)
-- Stack definida: FastAPI + HTMX + Alpine.js + Tailwind CSS
-
-## Decisões Recentes
-
-| Data | Decisão |
-|------|---------|
-| 09/mai | Workspace como filtro de tags (não campo novo no DB inicialmente) |
-| 09/mai | 2 níveis de contexto: inline (orchestrator) + referência (memory tags) |
-| 09/mai | Web UI com HTMX (server-driven, sem SPA pesado) |
-| 09/mai | PRs obrigatórios com Gemini Code Assist review |
-| 09/mai | Resiliência: auto-checkpoint JSON + standalone .md briefs |
+- Workflow engine: queue→work→review→done com enforcement + batch transitions
+- Dependency graph com cycle detection, unblock_at, patterns (linear/fan-out/fan-in)
+- Hierarquia 4 níveis + create_work_tree + complete_tree
+- Notes com schemas e gate enforcement por fase
+- **Workspaces**: entidade com tags, memory_tags, repos, conventions
+- **get_workspace_context**: payload filtrado por workspace (3 verbosities)
+- **get_execution_stack**: context stack para retomada pós-interrupção
+- **manage_archive**: auto-archive items done >Nd
+- **manage_checkpoints**: create/list/restore/verify (JSON snapshots)
+- **export/import_graph**: backup completo filtrado por workspace/tags
+- **get_metrics**: throughput, lead time, WIP, stale ratio, breakdowns
 
 ## Próximos Passos
 
-1. Criar docs/specs/ com SPEC por feature (#24–#28)
-2. Implementar #24 (workspace entity) — branch feat/workspace-entity
-3. Implementar #28 (resilience) em paralelo — branch feat/resilience
-4. Testar, PR, review, merge, tag v0.9.0
+- get_project_graph_metrics (caminho crítico, fan-out máximo, distância ao goal)
+- Kanban Web UI (FastAPI + HTMX + Tailwind) — em progresso
 
 ## Contexto Multi-Máquina
 
-- DB: `~/dtp/ai-configs/global/tasks.db` (sync via Insync/OneDrive)
-- Risco: WAL corruption se 2 máquinas escrevem simultaneamente
-- Mitigação: auto-checkpoint JSON + hot backup + import com dedup
+- DB: SQLite single-file (sync via Insync/OneDrive)
+- Mitigação WAL: manage_checkpoints + export_graph JSON

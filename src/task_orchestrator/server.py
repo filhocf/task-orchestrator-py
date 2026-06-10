@@ -535,6 +535,23 @@ def get_metrics(days: int = 30, workspace: str = "") -> str:
 
 
 @mcp.tool()
+def get_project_graph_metrics(workspace: str = "", root_id: str = "") -> str:
+    """Compute project graph metrics — critical path, impact scores, bottlenecks.
+
+    Use to understand project topology: what's on the critical path,
+    what unblocks the most work, and whether current work is on-track.
+    """
+    try:
+        return _json(
+            engine.get_project_graph_metrics(
+                workspace=workspace or None, root_id=root_id or None
+            )
+        )
+    except Exception as e:
+        return _err(e)
+
+
+@mcp.tool()
 def manage_archive(
     operation: str, workspace: str = "", archive_after_days: int = 30
 ) -> str:

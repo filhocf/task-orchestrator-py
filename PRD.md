@@ -10,38 +10,49 @@ AI agents perdem rastreio de trabalho complexo entre sessões. Contexto compacta
 2. **AI agent (Kiro/Guri)** — consome a API MCP para gerenciar tarefas, precisa de contexto filtrado e acionável, não dump completo.
 3. **Subagentes** — recebem contexto de workspace para executar tarefas específicas sem poluição de outros projetos.
 
+## Transport
+
+**StreamableHTTP** na porta 3201 (`MCP_TRANSPORT=streamable-http`, `MCP_HOST`, `MCP_PORT`).
+Fallback stdio disponível (default quando MCP_TRANSPORT não definido).
+Deploy via systemd service.
+
 ## Features
 
-### Implementadas (v0.8.0)
-- [x] F001 — Workflow state machine (queue→work→review→done) com enforcement
-- [x] F002 — Dependency graph com cycle detection e unblock_at configurável
-- [x] F003 — Hierarquia de items (4 níveis: epic→feature→task→subtask)
-- [x] F004 — Notes por fase (queue/work/review) com schemas e gates
-- [x] F005 — Tags, prioridade, complexidade, due_at
-- [x] F006 — Batch operations (create_work_tree, complete_tree, batch transitions)
-- [x] F007 — Stale detection e métricas (throughput, WIP, lead time)
-- [x] F008 — Export/import do grafo completo (JSON)
-- [x] F009 — Scheduling (cron expressions, next_run_at)
+### Implementadas (v1.1.0) — 22 tools MCP
 
-### Planejadas (v0.9.0 — Workspace-Aware Context Engine)
-- [ ] F010 — Workspace como entidade (config, tag mapping, metadata)
-- [ ] F011 — Queries filtradas por workspace (get_context, get_next_item, get_metrics)
-- [ ] F012 — get_workspace_context() — contexto pronto para subagentes
-- [ ] F013 — Memory tag bridge (2 níveis: inline + referência via mcp-memory)
-- [ ] F014 — Resilience (auto-checkpoint JSON, corruption recovery, workspace brief standalone)
+- ✅ F001 — Workflow state machine (queue→work→review→done) com enforcement
+- ✅ F002 — Dependency graph com cycle detection e unblock_at configurável
+- ✅ F003 — Hierarquia de items (4 níveis: epic→feature→task→subtask)
+- ✅ F004 — Notes por fase (queue/work/review) com schemas e gates
+- ✅ F005 — Tags, prioridade, complexidade, due_at
+- ✅ F006 — Batch operations (create_work_tree, complete_tree, batch transitions)
+- ✅ F007 — Stale detection e métricas (throughput, WIP, lead time)
+- ✅ F008 — Export/import do grafo completo (JSON) com filtro por workspace/tags
+- ✅ F009 — Scheduling (cron expressions, next_run_at)
+- ✅ F010 — Workspace como entidade (config, tag mapping, memory_tags, repos, conventions)
+- ✅ F011 — Queries filtradas por workspace (get_context, get_next_item, get_metrics)
+- ✅ F012 — get_workspace_context() — contexto pronto para subagentes (3 verbosities)
+- ✅ F013 — Memory tag bridge (2 níveis: inline + referência via mcp-memory)
+- ✅ F014 — Resilience (manage_checkpoints, verify, corruption recovery)
+- ✅ F015 — Execution stack (get_execution_stack) — retomada pós-interrupção
+- ✅ F016 — Auto-archive (manage_archive) — done items >Nd movidos para archived
+- ✅ F017 — StreamableHTTP transport com systemd service
 
-### Planejadas (v1.0.0 — Kanban Web UI)
-- [ ] F015 — Kanban board por workspace (FastAPI + HTMX + Tailwind)
-- [ ] F016 — Timeline/Gantt com dependências
-- [ ] F017 — Auto-archive de items done >30d
+### Em Progresso (v1.2.0 — Kanban Web UI)
 
-## Critérios de Aceite (v0.9.0)
+- [ ] F018 — Kanban board por workspace (FastAPI + HTMX + Tailwind)
+- [ ] F019 — Timeline/Gantt com dependências
 
-- `get_context(workspace="pessoal")` retorna apenas items do workspace
-- `get_workspace_context("mir")` gera payload consumível por subagente (<2000 tokens)
-- Export filtrado por workspace funciona
-- Auto-checkpoint JSON a cada N minutos (configurável)
-- Backward compatible (sem workspace = comportamento atual)
+### Planejadas (v1.3.0 — Graph Analytics)
+
+- [ ] F020 — get_project_graph_metrics (caminho crítico, fan-out máximo, distância ao goal)
+- [ ] F021 — Bottleneck detection (items com mais dependentes bloqueados)
+
+## Critérios de Aceite (v1.2.0)
+
+- Kanban board renderiza items por status com drag-and-drop
+- Filtro por workspace funciona no UI
+- Responsivo (mobile-friendly)
 
 ## Fora de Escopo
 
@@ -54,5 +65,5 @@ AI agents perdem rastreio de trabalho complexo entre sessões. Contexto compacta
 
 - SQLite single-file (sync via OneDrive/Insync — pode corromper WAL)
 - Roda em 3 máquinas (DNBSCDC289, socrates, sirdata) — resiliência obrigatória
-- MCP protocol (stdio transport) — sem HTTP server próprio (exceto Web UI futura)
+- MCP protocol: StreamableHTTP (porta 3201) + stdio fallback
 - Python 3.11+ / PyPI distribution
