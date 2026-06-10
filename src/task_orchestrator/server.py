@@ -253,6 +253,20 @@ def get_context(
 
 
 @mcp.tool()
+def get_execution_stack(workspace: str = "") -> str:
+    """Get current execution stack showing active and suspended work frames.
+
+    Returns frames ordered by depth: deepest = most recent lateral.
+    Each frame shows item title, status, and saved execution-state if available.
+    Use to understand 'where am I' after interruptions.
+    """
+    try:
+        return _json(engine.get_execution_stack(workspace=workspace or None))
+    except Exception as e:
+        return _err(e)
+
+
+@mcp.tool()
 def get_blocked_items() -> str:
     """Get all blocked items — both explicitly blocked and those with unsatisfied dependencies.
 

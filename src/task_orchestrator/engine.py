@@ -1713,3 +1713,55 @@ def get_workspace_context(workspace_name: str, verbosity: str = "standard") -> d
         return result
     finally:
         conn.close()
+
+
+def get_execution_stack(workspace: str | None = None) -> list[dict]:
+    """Return current execution stack — items in work/blocked ordered by depth.
+
+    Each frame: {depth, item_id, title, status, active, held_at, execution_state}
+    """
+    conn = get_connection()
+    try:
+        ws_clause, ws_params = _workspace_tag_filter(workspace)
+        ws_and = f" AND {ws_clause}" if ws_clause else ""
+
+        rows = conn.execute(
+            f"SELECT * FROM work_items WHERE status IN ('work', 'blocked') {ws_and}",
+            ws_params,
+        ).fetchall()
+
+        if not rows:
+            return []
+
+        items = [_row_to_dict(r) for r in rows]
+
+        # Compute depth for each item
+        for item in items:
+            item["_depth"] = _get_depth(conn, item["id"])
+
+        # Fetch execution-state notes
+        item_ids = [item["id"] for item in items]
+        placeholders = ",".join("?" for _ in item_ids)
+        note_rows = conn.execute(
+            f"SELECT item_id, body FROM notes WHERE item_id IN ({placeholders}) AND key='execution-state'",
+            item_ids,
+        ).fetchall()
+        note_map = {r["item_id"]: r["body"] for r in note_rows}
+
+        # Build frames: blocked (suspended) first by depth, then work (active) by depth
+        items.sort(key=lambda x: (0 if x["status"] == "blocked" else 1, x["_depth"]))
+
+        return [
+            {
+                "depth": item["_depth"],
+                "item_id": item["id"],
+                "title": item["title"],
+                "status": item["status"],
+                "active": item["status"] == "work",
+                "held_at": item["role_changed_at"] if item["status"] == "blocked" else None,
+                "execution_state": note_map.get(item["id"]),
+            }
+            for item in items
+        ]
+    finally:
+        conn.close()
