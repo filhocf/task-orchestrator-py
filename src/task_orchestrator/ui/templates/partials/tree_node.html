@@ -1,0 +1,28 @@
+{% set nodes = nodes if nodes is defined else [] %}
+<ul class="space-y-1 border-l border-gray-700 pl-3 ml-2">
+    {% for node in nodes %}
+    <li class="py-1">
+        <div class="flex items-center gap-2 text-sm">
+            <span>{{ node.priority_emoji }}</span>
+            <span class="px-1.5 py-0.5 rounded text-xs
+                {% if node.status == 'done' %}bg-green-900 text-green-300
+                {% elif node.status == 'work' %}bg-blue-900 text-blue-300
+                {% elif node.status == 'review' %}bg-purple-900 text-purple-300
+                {% elif node.status == 'blocked' %}bg-red-900 text-red-300
+                {% elif node.status == 'cancelled' %}bg-gray-700 text-gray-500
+                {% else %}bg-gray-700 text-gray-400{% endif %}">
+                {{ node.status }}
+            </span>
+            <span class="{% if node.status == 'done' %}text-green-300{% elif node.status == 'cancelled' %}text-gray-500 line-through{% else %}text-gray-200{% endif %}">
+                {{ node.title }}
+            </span>
+            {% if node.total_count > 0 %}
+            <span class="text-xs text-gray-500">({{ node.done_count }}/{{ node.total_count }})</span>
+            {% endif %}
+            {% if node.children %}
+            <a href="/arcs/{{ node.id }}" class="text-xs text-blue-400 hover:underline">expand →</a>
+            {% endif %}
+        </div>
+    </li>
+    {% endfor %}
+</ul>

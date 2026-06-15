@@ -197,6 +197,68 @@ def timeline(request: Request, workspace: str):
     )
 
 
+def _count_children(item_id: str) -> tuple[int, int]:
+    """Return (done_count, total_count) for direct children."""
+    children = query_items(parent_id=item_id, limit=500)
+    total = len(children)
+    done = sum(1 for c in children if c.get("status") == "done")
+    return done, total
+
+
+def _build_tree(item_id: str) -> list[dict]:
+    """Build tree nodes for children of an item."""
+    children = query_items(parent_id=item_id, limit=500)
+    nodes = []
+    for child in children:
+        grandchildren = query_items(parent_id=child["id"], limit=1)
+        done_count, total_count = _count_children(child["id"])
+        nodes.append({
+            "id": child["id"],
+            "title": child["title"],
+            "status": child.get("status", "queue"),
+            "priority_emoji": PRIORITY_EMOJI.get(child.get("priority", ""), "⚪"),
+            "children": len(grandchildren) > 0,
+            "done_count": done_count,
+            "total_count": total_count,
+        })
+    return nodes
+
+
+@app.get("/arcs", response_class=HTMLResponse)
+def arcs(request: Request):
+    """List all arc root items (tagged 'arc')."""
+    arc_items = query_items(tags="arc", limit=50)
+    for item in arc_items:
+        done, total = _count_children(item["id"])
+        item["done_count"] = done
+        item["child_count"] = total
+        item["priority_emoji"] = PRIORITY_EMOJI.get(item.get("priority", ""), "⚪")
+    return templates.TemplateResponse(request, "arcs.html", {"arcs": arc_items})
+
+
+@app.get("/arcs/{item_id}", response_class=HTMLResponse)
+def arc_detail(request: Request, item_id: str):
+    """Show hierarchical tree for an arc."""
+    arc = get_item(item_id)
+    if not arc:
+        return HTMLResponse("Not found", status_code=404)
+    arc["priority_emoji"] = PRIORITY_EMOJI.get(arc.get("priority", ""), "⚪")
+    children = _build_tree(item_id)
+    done_count = sum(1 for c in children if c["status"] == "done")
+    total_count = len(children)
+    return templates.TemplateResponse(
+        request, "arc_detail.html",
+        {"arc": arc, "children": children, "done_count": done_count, "total_count": total_count},
+    )
+
+
+@app.get("/arcs/{item_id}/children", response_class=HTMLResponse)
+def arc_children(request: Request, item_id: str):
+    """HTMX partial: load children of a node."""
+    nodes = _build_tree(item_id)
+    return templates.TemplateResponse(request, "partials/tree_node.html", {"nodes": nodes})
+
+
 @app.get("/workspaces")
 def get_workspaces():
     return list_workspaces()

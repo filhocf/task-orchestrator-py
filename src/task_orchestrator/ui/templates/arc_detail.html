@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="p-4">
+    <div class="flex items-center gap-2 mb-6">
+        <a href="/board/_all" class="text-xl font-bold mr-2 hover:text-blue-400">📋 Kanban</a>
+        <a href="/arcs" class="text-xl font-bold mr-2 hover:text-blue-400">🌳 Arcs</a>
+        <span class="text-xl font-bold text-green-400">→ {{ arc.title }}</span>
+    </div>
+
+    <div class="bg-gray-800 rounded-lg p-4 mb-4 max-w-4xl">
+        <div class="flex items-center gap-2 mb-2">
+            <span>{{ arc.priority_emoji }}</span>
+            <h2 class="text-lg font-bold">{{ arc.title }}</h2>
+            <span class="text-xs px-2 py-0.5 rounded-full
+                {% if arc.status == 'done' %}bg-green-800 text-green-200
+                {% elif arc.status == 'work' %}bg-blue-800 text-blue-200
+                {% elif arc.status == 'blocked' %}bg-red-800 text-red-200
+                {% else %}bg-gray-700 text-gray-300{% endif %}">
+                {{ arc.status }}
+            </span>
+            <span class="text-sm text-gray-400">{{ done_count }}/{{ total_count }} done</span>
+        </div>
+        {% if arc.description %}
+        <p class="text-sm text-gray-400 whitespace-pre-line">{{ arc.description }}</p>
+        {% endif %}
+    </div>
+
+    <div class="max-w-4xl">
+        {% if children %}
+        {% with nodes=children %}
+        {% include "partials/tree_node.html" %}
+        {% endwith %}
+        {% else %}
+        <p class="text-gray-500">No children found.</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
