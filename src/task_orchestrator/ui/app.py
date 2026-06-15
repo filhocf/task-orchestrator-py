@@ -83,6 +83,8 @@ def board(request: Request, workspace: str):
     ws = None if workspace == "_all" else workspace
     columns = _get_board_data(ws)
     workspaces = list_workspaces()
+    # Build swimlanes: group items by arc ancestor
+    lanes = _build_swimlanes(columns)
     return templates.TemplateResponse(
         request,
         "board.html",
@@ -90,10 +92,69 @@ def board(request: Request, workspace: str):
             "workspace": workspace,
             "workspaces": workspaces,
             "columns": columns,
+            "lanes": lanes,
             "statuses": STATUSES,
             "priority_emoji": PRIORITY_EMOJI,
         },
     )
+
+
+@app.get("/item/{item_id}", response_class=HTMLResponse)
+def item_detail(request: Request, item_id: str):
+    """Return item detail as HTML partial (for modal)."""
+    item = get_item(item_id)
+    if not item:
+        return HTMLResponse("Not found", status_code=404)
+    item["priority_emoji"] = PRIORITY_EMOJI.get(item.get("priority", ""), "⚪")
+    children = query_items(parent_id=item_id, limit=50)
+    return templates.TemplateResponse(
+        request, "partials/item_detail.html",
+        {"item": item, "children": children},
+    )
+
+
+def _find_arc_ancestor(item: dict) -> str | None:
+    """Walk up parent chain to find arc-tagged ancestor. Max 4 levels."""
+    pid = item.get("parent_id")
+    for _ in range(4):
+        if not pid:
+            return None
+        parent = get_item(pid)
+        if not parent:
+            return None
+        if "arc" in (parent.get("tags") or ""):
+            return parent["id"]
+        pid = parent.get("parent_id")
+    return None
+
+
+def _build_swimlanes(columns: dict) -> list[dict]:
+    """Group all items by arc ancestor for swimlane display."""
+    # Collect all arc items
+    arc_items = query_items(tags="arc", limit=50)
+    arc_map = {a["id"]: a["title"] for a in arc_items}
+
+    # Assign each item to a lane
+    lane_items: dict[str, dict[str, list]] = {}  # arc_id -> {status: [items]}
+    for status, items in columns.items():
+        for item in items:
+            arc_id = item.get("parent_id")
+            # Check if direct parent is arc, else walk up
+            if arc_id and arc_id in arc_map:
+                pass
+            else:
+                arc_id = _find_arc_ancestor(item) or "__other__"
+            lane_items.setdefault(arc_id, {s: [] for s in columns.keys()})
+            lane_items[arc_id][status].append(item)
+
+    # Build ordered lanes (arcs first, then "other")
+    lanes = []
+    for arc_id, title in arc_map.items():
+        if arc_id in lane_items:
+            lanes.append({"id": arc_id, "title": title, "columns": lane_items[arc_id]})
+    if "__other__" in lane_items:
+        lanes.append({"id": "__other__", "title": "Outros", "columns": lane_items["__other__"]})
+    return lanes
 
 
 @app.get("/board/{workspace}/column/{status}", response_class=HTMLResponse)
@@ -246,9 +307,12 @@ def arc_detail(request: Request, item_id: str):
     children = _build_tree(item_id)
     done_count = sum(1 for c in children if c["status"] == "done")
     total_count = len(children)
+    # Build mermaid graph
+    mermaid = _build_mermaid_graph(item_id, children)
     return templates.TemplateResponse(
         request, "arc_detail.html",
-        {"arc": arc, "children": children, "done_count": done_count, "total_count": total_count},
+        {"arc": arc, "children": children, "done_count": done_count,
+         "total_count": total_count, "mermaid": mermaid},
     )
 
 
@@ -257,6 +321,53 @@ def arc_children(request: Request, item_id: str):
     """HTMX partial: load children of a node."""
     nodes = _build_tree(item_id)
     return templates.TemplateResponse(request, "partials/tree_node.html", {"nodes": nodes})
+
+
+def _build_mermaid_graph(arc_id: str, children: list[dict]) -> str:
+    """Generate mermaid flowchart LR for an arc's children + deps."""
+    from ..db import get_connection
+
+    lines = ["graph LR"]
+    status_style = {
+        "done": "fill:#166534,color:#fff",
+        "work": "fill:#1e40af,color:#fff",
+        "review": "fill:#6b21a8,color:#fff",
+        "blocked": "fill:#991b1b,color:#fff",
+        "queue": "fill:#374151,color:#fff",
+        "cancelled": "fill:#1f2937,color:#6b7280",
+    }
+
+    # Nodes
+    ids = []
+    for c in children:
+        short_id = c["id"][:8]
+        ids.append(c["id"])
+        title = c["title"][:40].replace('"', "'")
+        lines.append(f'    {short_id}["{title}"]')
+
+    # Edges from dependencies
+    if ids:
+        conn = get_connection()
+        try:
+            placeholders = ",".join("?" * len(ids))
+            rows = conn.execute(
+                f"SELECT from_id, to_id FROM dependencies WHERE from_id IN ({placeholders}) OR to_id IN ({placeholders})",
+                ids + ids,
+            ).fetchall()
+            for r in rows:
+                f = r["from_id"][:8]
+                t = r["to_id"][:8]
+                lines.append(f"    {f} --> {t}")
+        finally:
+            conn.close()
+
+    # Styles
+    for c in children:
+        short_id = c["id"][:8]
+        style = status_style.get(c["status"], "fill:#374151,color:#fff")
+        lines.append(f"    style {short_id} {style}")
+
+    return "\n".join(lines)
 
 
 @app.get("/workspaces")

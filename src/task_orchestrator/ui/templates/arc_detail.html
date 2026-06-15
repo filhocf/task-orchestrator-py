@@ -7,14 +7,13 @@
         <span class="text-xl font-bold text-green-400">→ {{ arc.title }}</span>
     </div>
 
-    <div class="bg-gray-800 rounded-lg p-4 mb-4 max-w-4xl">
+    <div class="bg-gray-800 rounded-lg p-4 mb-4">
         <div class="flex items-center gap-2 mb-2">
             <span>{{ arc.priority_emoji }}</span>
             <h2 class="text-lg font-bold">{{ arc.title }}</h2>
             <span class="text-xs px-2 py-0.5 rounded-full
                 {% if arc.status == 'done' %}bg-green-800 text-green-200
                 {% elif arc.status == 'work' %}bg-blue-800 text-blue-200
-                {% elif arc.status == 'blocked' %}bg-red-800 text-red-200
                 {% else %}bg-gray-700 text-gray-300{% endif %}">
                 {{ arc.status }}
             </span>
@@ -25,7 +24,17 @@
         {% endif %}
     </div>
 
-    <div class="max-w-4xl">
+    <!-- Mermaid Graph -->
+    {% if mermaid %}
+    <div class="bg-gray-800 rounded-lg p-4 mb-4">
+        <h3 class="text-sm font-semibold text-gray-400 mb-2">Grafo de Dependências</h3>
+        <pre class="mermaid">{{ mermaid }}</pre>
+    </div>
+    {% endif %}
+
+    <!-- Tree list -->
+    <div class="bg-gray-800 rounded-lg p-4">
+        <h3 class="text-sm font-semibold text-gray-400 mb-2">Itens</h3>
         {% if children %}
         {% with nodes=children %}
         {% include "partials/tree_node.html" %}
@@ -35,4 +44,45 @@
         {% endif %}
     </div>
 </div>
+
+<!-- Detail Modal (same as board) -->
+<div id="detail-modal" class="hidden fixed inset-0 bg-black/60 flex items-center justify-center z-50"
+     onclick="if(event.target===this) this.classList.add('hidden')">
+    <div class="bg-gray-800 rounded-lg p-6 max-w-lg w-full max-h-[80vh] overflow-y-auto">
+        <div class="flex justify-between items-center mb-4">
+            <h3 class="text-lg font-bold">Detalhes</h3>
+            <button onclick="document.getElementById('detail-modal').classList.add('hidden')"
+                    class="text-gray-400 hover:text-white text-xl">✕</button>
+        </div>
+        <div id="modal-body">
+            <p class="text-gray-400">Carregando...</p>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>
+    mermaid.initialize({ startOnLoad: true, theme: 'dark', securityLevel: 'loose' });
+    // Click handler for mermaid nodes
+    window.addEventListener('click', function(e) {
+        const node = e.target.closest('.node');
+        if (node) {
+            const id = node.id.replace('flowchart-', '').split('-')[0];
+            // Find full item ID from data
+            const items = document.querySelectorAll('[data-item-id]');
+            for (const el of items) {
+                if (el.dataset.itemId.startsWith(id)) {
+                    htmx.ajax('GET', '/item/' + el.dataset.itemId, '#modal-body');
+                    document.getElementById('detail-modal').classList.remove('hidden');
+                    return;
+                }
+            }
+        }
+    });
+</script>
+
+<!-- Hidden data for ID mapping -->
+{% for c in children %}
+<span data-item-id="{{ c.id }}" class="hidden"></span>
+{% endfor %}
 {% endblock %}

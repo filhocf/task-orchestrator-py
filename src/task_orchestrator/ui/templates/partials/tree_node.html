@@ -2,7 +2,9 @@
 <ul class="space-y-1 border-l border-gray-700 pl-3 ml-2">
     {% for node in nodes %}
     <li class="py-1">
-        <div class="flex items-center gap-2 text-sm">
+        <div class="flex items-center gap-2 text-sm cursor-pointer hover:bg-gray-700 rounded px-1 -mx-1"
+             hx-get="/item/{{ node.id }}" hx-target="#modal-body" hx-trigger="click"
+             onclick="document.getElementById('detail-modal').classList.remove('hidden')">
             <span>{{ node.priority_emoji }}</span>
             <span class="px-1.5 py-0.5 rounded text-xs
                 {% if node.status == 'done' %}bg-green-900 text-green-300
@@ -18,9 +20,6 @@
             </span>
             {% if node.total_count > 0 %}
             <span class="text-xs text-gray-500">({{ node.done_count }}/{{ node.total_count }})</span>
-            {% endif %}
-            {% if node.children %}
-            <a href="/arcs/{{ node.id }}" class="text-xs text-blue-400 hover:underline">expand →</a>
             {% endif %}
         </div>
     </li>

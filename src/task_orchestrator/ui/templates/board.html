@@ -1,10 +1,11 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="p-4">
-    <!-- Workspace tabs -->
+    <!-- Nav + workspace tabs -->
     <div class="flex items-center gap-2 mb-4">
         <h1 class="text-xl font-bold mr-2 text-blue-400">📋 Kanban</h1>
-        <a href="/timeline/{{ workspace }}" class="text-xl font-bold mr-4 hover:text-blue-400">⏱ Timeline</a>
+        <a href="/timeline/{{ workspace }}" class="text-xl font-bold mr-2 hover:text-blue-400">⏱ Timeline</a>
+        <a href="/arcs" class="text-xl font-bold mr-4 hover:text-blue-400">🌳 Arcs</a>
         <a href="/board/_all"
            class="px-3 py-1 rounded text-sm {% if workspace == '_all' %}bg-blue-600{% else %}bg-gray-700 hover:bg-gray-600{% endif %}">
             All
@@ -17,65 +18,52 @@
         {% endfor %}
     </div>
 
-    <!-- Board columns -->
-    <div class="grid grid-cols-4 gap-4" id="board">
+    <!-- Column headers -->
+    <div class="grid grid-cols-4 gap-4 mb-2">
         {% for status in statuses %}
-        <div class="bg-gray-800 rounded-lg p-3 min-h-[70vh]">
-            <h2 class="text-sm font-semibold uppercase text-gray-400 mb-3 flex justify-between">
-                {{ status }}
-                <span class="bg-gray-700 px-2 rounded-full text-xs">{{ columns[status]|length }}</span>
-            </h2>
-            <div class="kanban-column space-y-2" data-status="{{ status }}" id="col-{{ status }}">
-                {% for item in columns[status] %}
-                {% include "partials/card.html" %}
-                {% endfor %}
-            </div>
-        </div>
+        <div class="text-sm font-semibold uppercase text-gray-400 text-center">{{ status }}</div>
         {% endfor %}
     </div>
+
+    <!-- Swimlanes -->
+    {% for lane in lanes %}
+    <div class="mb-4">
+        <div class="text-xs font-bold text-gray-500 uppercase mb-1 px-2 py-1 bg-gray-800 rounded-t border-l-4
+            {% if lane.id != '__other__' %}border-blue-500{% else %}border-gray-600{% endif %}">
+            {% if lane.id != '__other__' %}🌳{% endif %} {{ lane.title }}
+        </div>
+        <div class="grid grid-cols-4 gap-4 bg-gray-850 rounded-b p-2 min-h-[60px]">
+            {% for status in statuses %}
+            <div class="space-y-1">
+                {% for item in lane.columns[status] %}
+                <div class="bg-gray-800 rounded p-2 text-xs cursor-pointer hover:ring-1 hover:ring-blue-500 transition"
+                     hx-get="/item/{{ item.id }}" hx-target="#modal-body" hx-trigger="click"
+                     onclick="document.getElementById('detail-modal').classList.remove('hidden')">
+                    <div class="flex items-center gap-1">
+                        <span>{{ item.priority_emoji }}</span>
+                        <span class="truncate">{{ item.title }}</span>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endfor %}
 </div>
 
-<script>
-var sortableInstances = [];
-
-function initSortable() {
-    // Destroy existing instances to prevent memory leaks
-    sortableInstances.forEach(s => s.destroy());
-    sortableInstances = [];
-
-    document.querySelectorAll('.kanban-column').forEach(col => {
-        sortableInstances.push(new Sortable(col, {
-            group: 'kanban',
-            animation: 150,
-            ghostClass: 'sortable-ghost',
-            onEnd: function(evt) {
-                const itemId = evt.item.dataset.id;
-                const newStatus = evt.to.dataset.status;
-                const workspace = JSON.parse('{{ workspace | tojson }}');
-
-                fetch('/board/move', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-                    body: new URLSearchParams({item_id: itemId, new_status: newStatus, workspace: workspace})
-                }).then(r => r.text()).then(html => {
-                    const tmp = document.createElement('div');
-                    tmp.innerHTML = html;
-                    const newCols = tmp.querySelectorAll('[data-status]');
-                    newCols.forEach(newCol => {
-                        const status = newCol.dataset.status;
-                        const existing = document.getElementById('col-' + status);
-                        if (existing) {
-                            existing.parentElement.querySelector('span').textContent = newCol.querySelectorAll('.card').length;
-                            existing.innerHTML = newCol.innerHTML;
-                        }
-                    });
-                    initSortable();
-                });
-            }
-        }));
-    });
-}
-
-initSortable();
-</script>
+<!-- Detail Modal -->
+<div id="detail-modal" class="hidden fixed inset-0 bg-black/60 flex items-center justify-center z-50"
+     onclick="if(event.target===this) this.classList.add('hidden')">
+    <div class="bg-gray-800 rounded-lg p-6 max-w-lg w-full max-h-[80vh] overflow-y-auto">
+        <div class="flex justify-between items-center mb-4">
+            <h3 class="text-lg font-bold">Detalhes</h3>
+            <button onclick="document.getElementById('detail-modal').classList.add('hidden')"
+                    class="text-gray-400 hover:text-white text-xl">✕</button>
+        </div>
+        <div id="modal-body">
+            <p class="text-gray-400">Carregando...</p>
+        </div>
+    </div>
+</div>
 {% endblock %}

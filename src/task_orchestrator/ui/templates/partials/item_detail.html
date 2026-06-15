@@ -1,0 +1,41 @@
+<div>
+    <div class="flex items-center gap-2 mb-3">
+        <span class="text-lg">{{ item.priority_emoji }}</span>
+        <h2 class="font-bold text-lg">{{ item.title }}</h2>
+    </div>
+    <div class="flex gap-2 mb-3">
+        <span class="px-2 py-0.5 rounded text-xs
+            {% if item.status == 'done' %}bg-green-900 text-green-300
+            {% elif item.status == 'work' %}bg-blue-900 text-blue-300
+            {% elif item.status == 'review' %}bg-purple-900 text-purple-300
+            {% elif item.status == 'blocked' %}bg-red-900 text-red-300
+            {% else %}bg-gray-700 text-gray-400{% endif %}">
+            {{ item.status }}
+        </span>
+        {% if item.tags %}
+        <span class="text-xs text-gray-500">{{ item.tags }}</span>
+        {% endif %}
+    </div>
+    {% if item.description %}
+    <div class="text-sm text-gray-300 whitespace-pre-line mb-3 max-h-48 overflow-y-auto">{{ item.description }}</div>
+    {% endif %}
+    <div class="text-xs text-gray-500 mb-2">
+        ID: {{ item.id[:12] }}… | Criado: {{ item.created_at[:10] }}
+    </div>
+    {% if children %}
+    <div class="border-t border-gray-700 pt-2 mt-2">
+        <p class="text-xs font-semibold text-gray-400 mb-1">Filhos ({{ children|length }})</p>
+        <ul class="space-y-1">
+            {% for c in children %}
+            <li class="text-xs text-gray-300">
+                <span class="px-1 py-0.5 rounded
+                    {% if c.status == 'done' %}bg-green-900{% elif c.status == 'work' %}bg-blue-900{% else %}bg-gray-700{% endif %}">
+                    {{ c.status }}
+                </span>
+                {{ c.title }}
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+</div>
