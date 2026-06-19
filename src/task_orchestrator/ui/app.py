@@ -79,12 +79,17 @@ def index():
 
 
 @app.get("/board/{workspace}", response_class=HTMLResponse)
-def board(request: Request, workspace: str):
+def board(request: Request, workspace: str, sort: str = "asc", sort_by: str = "alpha"):
     ws = None if workspace == "_all" else workspace
     columns = _get_board_data(ws)
     workspaces = list_workspaces()
     # Build swimlanes: group items by arc ancestor
     lanes = _build_swimlanes(columns)
+    # Sort lanes
+    if sort_by == "open":
+        lanes = sorted(lanes, key=lambda l: l["open_count"], reverse=(sort != "asc"))
+    else:
+        lanes = sorted(lanes, key=lambda l: l["title"].lower(), reverse=(sort == "desc"))
     return templates.TemplateResponse(
         request,
         "board.html",
@@ -95,6 +100,8 @@ def board(request: Request, workspace: str):
             "lanes": lanes,
             "statuses": STATUSES,
             "priority_emoji": PRIORITY_EMOJI,
+            "sort": sort,
+            "sort_by": sort_by,
         },
     )
 
@@ -128,32 +135,131 @@ def _find_arc_ancestor(item: dict) -> str | None:
     return None
 
 
+def _classify_item(item: dict, arc_map: dict, top_arcs: dict, parent_cache: dict) -> tuple[str, str | None]:
+    """Walk up parent chain to find (top_arc_id, sub_arc_id). Uses parent_cache to avoid N+1."""
+    pid = item.get("parent_id")
+    prev_arc = None
+    for _ in range(5):
+        if not pid:
+            return "__other__", prev_arc
+        if pid in top_arcs:
+            return pid, prev_arc
+        if pid in arc_map:
+            prev_arc = pid
+        parent = parent_cache.get(pid)
+        if not parent:
+            return "__other__", prev_arc
+        pid = parent.get("parent_id")
+    return "__other__", prev_arc
+
+
 def _build_swimlanes(columns: dict) -> list[dict]:
-    """Group all items by arc ancestor for swimlane display."""
+    """Group all items by arc ancestor for swimlane display, with sublanes."""
     # Collect all arc items
     arc_items = query_items(tags="arc", limit=50)
     arc_map = {a["id"]: a["title"] for a in arc_items}
 
-    # Assign each item to a lane
-    lane_items: dict[str, dict[str, list]] = {}  # arc_id -> {status: [items]}
+    # Only top-level arcs become swimlanes
+    top_arcs = {}
+    for a in arc_items:
+        parent_id = a.get("parent_id")
+        if parent_id and parent_id in arc_map:
+            continue
+        top_arcs[a["id"]] = a["title"]
+
+    # Sub-arcs: direct children of top-arcs that are also arcs
+    sub_arcs = {}  # sub_arc_id -> {title, parent_arc_id}
+    for a in arc_items:
+        pid = a.get("parent_id")
+        if pid and pid in top_arcs:
+            sub_arcs[a["id"]] = {"title": a["title"], "parent": pid}
+
+    # Pre-load parent cache: all items that have a parent_id (avoids N+1 get_item calls)
+    all_parent_ids = set()
+    for items in columns.values():
+        for item in items:
+            pid = item.get("parent_id")
+            while pid:
+                if pid in all_parent_ids:
+                    break
+                all_parent_ids.add(pid)
+                # We don't know the grandparent yet; will resolve after loading
+                break
+    # Load all potential ancestors in bulk
+    parent_cache: dict[str, dict] = {}
+    # Arc items themselves are likely parents
+    for a in arc_items:
+        parent_cache[a["id"]] = a
+    # Load remaining parents via get_item (batch: only unique IDs not already cached)
+    for pid in all_parent_ids:
+        if pid not in parent_cache:
+            p = get_item(pid)
+            if p:
+                parent_cache[p["id"]] = p
+    # Expand cache up the chain (max 5 levels)
+    for _ in range(4):
+        new_ids = set()
+        for p in list(parent_cache.values()):
+            gpid = p.get("parent_id")
+            if gpid and gpid not in parent_cache:
+                new_ids.add(gpid)
+        if not new_ids:
+            break
+        for pid in new_ids:
+            p = get_item(pid)
+            if p:
+                parent_cache[p["id"]] = p
+
+    # Assign each item to a lane + sublane
+    # Structure: lane_items[top_arc_id][sub_arc_id|"__direct__"][status] = [items]
+    lane_data: dict[str, dict[str, dict[str, list]]] = {}
     for status, items in columns.items():
         for item in items:
-            arc_id = item.get("parent_id")
-            # Check if direct parent is arc, else walk up
-            if arc_id and arc_id in arc_map:
-                pass
-            else:
-                arc_id = _find_arc_ancestor(item) or "__other__"
-            lane_items.setdefault(arc_id, {s: [] for s in columns.keys()})
-            lane_items[arc_id][status].append(item)
+            top_id, sub_id_raw = _classify_item(item, arc_map, top_arcs, parent_cache)
+            sub_id = sub_id_raw or "__direct__"
+            lane_data.setdefault(top_id, {}).setdefault(sub_id, {s: [] for s in columns.keys()})
+            lane_data[top_id][sub_id][status].append(item)
 
-    # Build ordered lanes (arcs first, then "other")
+    # Build lanes with sublanes
     lanes = []
-    for arc_id, title in arc_map.items():
-        if arc_id in lane_items:
-            lanes.append({"id": arc_id, "title": title, "columns": lane_items[arc_id]})
-    if "__other__" in lane_items:
-        lanes.append({"id": "__other__", "title": "Outros", "columns": lane_items["__other__"]})
+    for arc_id, title in top_arcs.items():
+        if arc_id not in lane_data:
+            continue
+        subs = lane_data[arc_id]
+        # Compute totals across all sublanes
+        all_items_flat = {s: [] for s in columns.keys()}
+        for sub_cols in subs.values():
+            for st, items in sub_cols.items():
+                all_items_flat[st].extend(items)
+        total = sum(len(v) for v in all_items_flat.values())
+        open_count = total - len(all_items_flat.get("done", []))
+
+        # Build sublane list
+        sublanes = []
+        for sub_id, sub_cols in subs.items():
+            sub_title = sub_arcs[sub_id]["title"] if sub_id in sub_arcs else None
+            sub_total = sum(len(v) for v in sub_cols.values())
+            sub_open = sub_total - len(sub_cols.get("done", []))
+            sublanes.append({"id": sub_id, "title": sub_title, "columns": sub_cols, "open_count": sub_open, "total_count": sub_total})
+
+        # Sort sublanes: direct first, then by title
+        sublanes.sort(key=lambda s: (s["title"] or "", s["id"]))
+
+        # If only one sublane (direct), flatten
+        if len(sublanes) == 1 and sublanes[0]["id"] == "__direct__":
+            lanes.append({"id": arc_id, "title": title, "columns": all_items_flat, "open_count": open_count, "total_count": total, "sublanes": []})
+        else:
+            lanes.append({"id": arc_id, "title": title, "columns": all_items_flat, "open_count": open_count, "total_count": total, "sublanes": sublanes})
+
+    if "__other__" in lane_data:
+        subs = lane_data["__other__"]
+        all_items_flat = {s: [] for s in columns.keys()}
+        for sub_cols in subs.values():
+            for st, items in sub_cols.items():
+                all_items_flat[st].extend(items)
+        total = sum(len(v) for v in all_items_flat.values())
+        open_count = total - len(all_items_flat.get("done", []))
+        lanes.append({"id": "__other__", "title": "Outros", "columns": all_items_flat, "open_count": open_count, "total_count": total, "sublanes": []})
     return lanes
 
 
@@ -286,7 +392,7 @@ def _build_tree(item_id: str) -> list[dict]:
 
 
 @app.get("/arcs", response_class=HTMLResponse)
-def arcs(request: Request):
+def arcs(request: Request, sort: str = "asc"):
     """List all arc root items (tagged 'arc')."""
     arc_items = query_items(tags="arc", limit=50)
     for item in arc_items:
@@ -294,11 +400,13 @@ def arcs(request: Request):
         item["done_count"] = done
         item["child_count"] = total
         item["priority_emoji"] = PRIORITY_EMOJI.get(item.get("priority", ""), "⚪")
-    return templates.TemplateResponse(request, "arcs.html", {"arcs": arc_items})
+    # Sort by title
+    arc_items = sorted(arc_items, key=lambda i: i["title"].lower(), reverse=(sort == "desc"))
+    return templates.TemplateResponse(request, "arcs.html", {"arcs": arc_items, "sort": sort})
 
 
 @app.get("/arcs/{item_id}", response_class=HTMLResponse)
-def arc_detail(request: Request, item_id: str):
+def arc_detail(request: Request, item_id: str, direction: str = "TB", edges: str = "bezier"):
     """Show hierarchical tree for an arc."""
     arc = get_item(item_id)
     if not arc:
@@ -307,12 +415,11 @@ def arc_detail(request: Request, item_id: str):
     children = _build_tree(item_id)
     done_count = sum(1 for c in children if c["status"] == "done")
     total_count = len(children)
-    # Build mermaid graph
-    mermaid = _build_mermaid_graph(item_id, children)
+    graph_data = _build_cytoscape_data(item_id, children)
     return templates.TemplateResponse(
         request, "arc_detail.html",
         {"arc": arc, "children": children, "done_count": done_count,
-         "total_count": total_count, "mermaid": mermaid},
+         "total_count": total_count, "graph_data": graph_data, "direction": direction, "item_id": item_id, "edges": edges},
     )
 
 
@@ -323,51 +430,90 @@ def arc_children(request: Request, item_id: str):
     return templates.TemplateResponse(request, "partials/tree_node.html", {"nodes": nodes})
 
 
-def _build_mermaid_graph(arc_id: str, children: list[dict]) -> str:
-    """Generate mermaid flowchart LR for an arc's children + deps."""
+@app.get("/arcs/{item_id}/children-json")
+def arc_children_json(item_id: str):
+    """JSON: children as Cytoscape nodes/edges for graph expand."""
+    import json as _json
+    children = query_items(parent_id=item_id, limit=50)
+    nodes = []
+    edges = []
+    for child in children:
+        nodes.append({"data": {"id": child["id"], "label": child.get("title", "")[:25], "status": child.get("status", "queue")}})
+        edges.append({"data": {"source": item_id, "target": child["id"]}})
+    return _json.loads(_json.dumps({"nodes": nodes, "edges": edges}))
+
+
+def _build_cytoscape_data(arc_id: str, children: list[dict]) -> str:
+    """Generate Cytoscape.js JSON data showing evolution tree (waves + deps only)."""
+    import json
+
     from ..db import get_connection
 
-    lines = ["graph LR"]
-    status_style = {
-        "done": "fill:#166534,color:#fff",
-        "work": "fill:#1e40af,color:#fff",
-        "review": "fill:#6b21a8,color:#fff",
-        "blocked": "fill:#991b1b,color:#fff",
-        "queue": "fill:#374151,color:#fff",
-        "cancelled": "fill:#1f2937,color:#6b7280",
-    }
+    conn = get_connection()
+    try:
+        root = conn.execute("SELECT id, title, status FROM work_items WHERE id = ?", (arc_id,)).fetchone()
+        if not root:
+            return json.dumps({"nodes": [], "edges": []})
 
-    # Nodes
-    ids = []
-    for c in children:
-        short_id = c["id"][:8]
-        ids.append(c["id"])
-        title = c["title"][:40].replace('"', "'")
-        lines.append(f'    {short_id}["{title}"]')
+        direct_children = conn.execute(
+            "SELECT id, title, status, priority, tags FROM work_items WHERE parent_id = ?", (arc_id,)
+        ).fetchall()
 
-    # Edges from dependencies
-    if ids:
-        conn = get_connection()
-        try:
-            placeholders = ",".join("?" * len(ids))
-            rows = conn.execute(
+        all_child_ids = [r["id"] for r in direct_children]
+        placeholders = ",".join("?" * len(all_child_ids)) if all_child_ids else "''"
+
+        # Items involved in dependencies
+        dep_items = set()
+        dep_rows = []
+        if all_child_ids:
+            dep_rows = conn.execute(
                 f"SELECT from_id, to_id FROM dependencies WHERE from_id IN ({placeholders}) OR to_id IN ({placeholders})",
-                ids + ids,
+                all_child_ids + all_child_ids,
             ).fetchall()
-            for r in rows:
-                f = r["from_id"][:8]
-                t = r["to_id"][:8]
-                lines.append(f"    {f} --> {t}")
-        finally:
-            conn.close()
+            for r in dep_rows:
+                dep_items.add(r["from_id"])
+                dep_items.add(r["to_id"])
 
-    # Styles
-    for c in children:
-        short_id = c["id"][:8]
-        style = status_style.get(c["status"], "fill:#374151,color:#fff")
-        lines.append(f"    style {short_id} {style}")
+        # Filter: show waves + items with deps + items with children
+        show_items = []
+        for item in direct_children:
+            tags = item["tags"] or ""
+            has_deps = item["id"] in dep_items
+            has_children = conn.execute("SELECT COUNT(*) FROM work_items WHERE parent_id=?", (item["id"],)).fetchone()[0] > 0
+            is_wave = "wave" in tags
+            if is_wave or has_deps or has_children:
+                show_items.append(dict(item))
 
-    return "\n".join(lines)
+        if not show_items:
+            show_items = [dict(r) for r in direct_children]
+
+        if not show_items:
+            return json.dumps({"nodes": [], "edges": []})
+
+        nodes = [{"data": {"id": root["id"], "label": root["title"][:40], "status": root["status"] or "queue", "is_root": True}}]
+        show_ids = set()
+        for item in show_items:
+            show_ids.add(item["id"])
+            nodes.append({"data": {"id": item["id"], "label": item["title"][:35], "status": item.get("status", "queue"), "is_root": False}})
+
+        edges = []
+        dep_edges = set()
+        if all_child_ids:
+            for r in dep_rows:
+                if r["from_id"] in show_ids and r["to_id"] in show_ids:
+                    edges.append({"data": {"source": r["from_id"], "target": r["to_id"]}})
+                    dep_edges.add((r["from_id"], r["to_id"]))
+
+        # Root→child edges for items without incoming deps
+        items_with_incoming = {to for _, to in dep_edges}
+        for item in show_items:
+            if item["id"] not in items_with_incoming:
+                edges.append({"data": {"source": root["id"], "target": item["id"]}})
+
+    finally:
+        conn.close()
+
+    return json.dumps({"nodes": nodes, "edges": edges})
 
 
 @app.get("/workspaces")

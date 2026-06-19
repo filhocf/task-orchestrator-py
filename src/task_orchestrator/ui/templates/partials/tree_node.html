@@ -1,10 +1,18 @@
 {% set nodes = nodes if nodes is defined else [] %}
-<ul class="space-y-1 border-l border-gray-700 pl-3 ml-2">
+<ul class="space-y-0.5 border-l border-gray-700 pl-4 ml-1">
     {% for node in nodes %}
-    <li class="py-1">
-        <div class="flex items-center gap-2 text-sm cursor-pointer hover:bg-gray-700 rounded px-1 -mx-1"
-             hx-get="/item/{{ node.id }}" hx-target="#modal-body" hx-trigger="click"
-             onclick="document.getElementById('detail-modal').classList.remove('hidden')">
+    <li>
+        <div class="flex items-center gap-2 text-sm py-0.5">
+            {% if node.children %}
+            <span class="text-gray-500 cursor-pointer" onclick="
+                var el = document.getElementById('children-{{ node.id[:8] }}');
+                var arrow = this;
+                if (el.innerHTML.trim()) { el.innerHTML = ''; arrow.textContent = '▶'; }
+                else { htmx.ajax('GET', '/arcs/{{ node.id }}/children', '#children-{{ node.id[:8] }}'); arrow.textContent = '▼'; }
+            ">▶</span>
+            {% else %}
+            <span class="text-gray-600">─</span>
+            {% endif %}
             <span>{{ node.priority_emoji }}</span>
             <span class="px-1.5 py-0.5 rounded text-xs
                 {% if node.status == 'done' %}bg-green-900 text-green-300
@@ -15,13 +23,19 @@
                 {% else %}bg-gray-700 text-gray-400{% endif %}">
                 {{ node.status }}
             </span>
-            <span class="{% if node.status == 'done' %}text-green-300{% elif node.status == 'cancelled' %}text-gray-500 line-through{% else %}text-gray-200{% endif %}">
+            <span class="cursor-pointer hover:underline
+                {% if node.status == 'done' %}text-green-300{% elif node.status == 'cancelled' %}text-gray-500 line-through{% else %}text-gray-200{% endif %}"
+                hx-get="/item/{{ node.id }}" hx-target="#modal-body" hx-trigger="click"
+                onclick="document.getElementById('detail-modal').classList.remove('hidden')">
                 {{ node.title }}
             </span>
             {% if node.total_count > 0 %}
             <span class="text-xs text-gray-500">({{ node.done_count }}/{{ node.total_count }})</span>
             {% endif %}
         </div>
+        {% if node.children %}
+        <div id="children-{{ node.id[:8] }}" class="ml-2"></div>
+        {% endif %}
     </li>
     {% endfor %}
 </ul>

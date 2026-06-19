@@ -753,6 +753,21 @@ def main():
         mcp.settings.host = host
         mcp.settings.port = port
         mcp.settings.stateless_http = True
+
+    # Optional: start Web UI in background thread
+    if os.environ.get("MCP_UI_ENABLED", "").lower() in ("true", "1", "yes"):
+        import threading
+        ui_host = os.environ.get("MCP_UI_HOST", "127.0.0.1")
+        ui_port = int(os.environ.get("MCP_UI_PORT", "8080"))
+
+        def _run_ui():
+            import uvicorn
+            from .ui.app import app
+            uvicorn.run(app, host=ui_host, port=ui_port, log_level="warning")
+
+        t = threading.Thread(target=_run_ui, daemon=True)
+        t.start()
+
     mcp.run(transport=transport)
 
 

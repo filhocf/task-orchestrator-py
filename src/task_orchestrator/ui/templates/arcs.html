@@ -5,6 +5,22 @@
         <a href="/board/_all" class="text-xl font-bold mr-2 hover:text-blue-400">📋 Kanban</a>
         <a href="/timeline/_all" class="text-xl font-bold mr-2 hover:text-blue-400">⏱ Timeline</a>
         <h1 class="text-xl font-bold mr-4 text-green-400">🌳 Arcs</h1>
+        <a href="/arcs?sort={{ 'desc' if sort == 'asc' else 'asc' }}"
+           class="text-xs px-2 py-1 rounded bg-gray-700 hover:bg-gray-600">
+            {{ '↑ A-Z' if sort == 'asc' else '↓ Z-A' }}
+        </a>
+    </div>
+
+    <!-- Legend -->
+    <div class="flex items-center gap-3 mb-4 text-xs text-gray-400">
+        <span>🔴 critical</span>
+        <span>🟠 high</span>
+        <span>🔵 medium</span>
+        <span>⚪ low</span>
+        <span class="ml-3 px-1.5 py-0.5 rounded bg-green-900 text-green-300">done</span>
+        <span class="px-1.5 py-0.5 rounded bg-blue-900 text-blue-300">work</span>
+        <span class="px-1.5 py-0.5 rounded bg-red-900 text-red-300">blocked</span>
+        <span class="px-1.5 py-0.5 rounded bg-gray-700 text-gray-400">queue</span>
     </div>
 
     {% if arcs %}

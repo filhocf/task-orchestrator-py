@@ -24,11 +24,22 @@
         {% endif %}
     </div>
 
-    <!-- Mermaid Graph -->
-    {% if mermaid %}
+    <!-- Cytoscape Graph -->
+    {% if graph_data %}
     <div class="bg-gray-800 rounded-lg p-4 mb-4">
-        <h3 class="text-sm font-semibold text-gray-400 mb-2">Grafo de Dependências</h3>
-        <pre class="mermaid">{{ mermaid }}</pre>
+        <h3 class="text-sm font-semibold text-gray-400 mb-2">Grafo de Dependências
+            <a href="/arcs/{{ item_id }}?direction=TB"
+               class="ml-3 text-xs px-2 py-1 rounded {{ 'bg-blue-700' if direction == 'TB' else 'bg-gray-700 hover:bg-gray-600' }} text-gray-300">↓ Vertical</a>
+            <a href="/arcs/{{ item_id }}?direction=LR"
+               class="text-xs px-2 py-1 rounded {{ 'bg-blue-700' if direction == 'LR' else 'bg-gray-700 hover:bg-gray-600' }} text-gray-300">→ Horizontal</a>
+            <a href="/arcs/{{ item_id }}?direction=tree&edges={{ edges }}"
+               class="text-xs px-2 py-1 rounded {{ 'bg-blue-700' if direction == 'tree' else 'bg-gray-700 hover:bg-gray-600' }} text-gray-300">🌳 Tree</a>
+            <span class="mx-2 text-gray-600">|</span>
+            <a href="/arcs/{{ item_id }}?direction={{ direction }}&edges={{ 'taxi' if edges == 'bezier' else 'bezier' }}"
+               class="text-xs px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-gray-300">
+                {{ '⌒ Curvas' if edges == 'bezier' else '⊾ Ângulos' }}</a>
+        </h3>
+        <div id="cy" style="width:100%; height:500px; background:#1f2937; border-radius:0.5rem;"></div>
     </div>
     {% endif %}
 
@@ -60,29 +71,109 @@
     </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://unpkg.com/dagre@0.8/dist/dagre.min.js"></script>
+<script src="https://unpkg.com/cytoscape@3/dist/cytoscape.min.js"></script>
+<script src="https://unpkg.com/cytoscape-dagre@2/cytoscape-dagre.js"></script>
 <script>
-    mermaid.initialize({ startOnLoad: true, theme: 'dark', securityLevel: 'loose' });
-    // Click handler for mermaid nodes
-    window.addEventListener('click', function(e) {
-        const node = e.target.closest('.node');
-        if (node) {
-            const id = node.id.replace('flowchart-', '').split('-')[0];
-            // Find full item ID from data
-            const items = document.querySelectorAll('[data-item-id]');
-            for (const el of items) {
-                if (el.dataset.itemId.startsWith(id)) {
-                    htmx.ajax('GET', '/item/' + el.dataset.itemId, '#modal-body');
+(function() {
+    var graphData = {{ graph_data | safe }};
+    if (!graphData.nodes.length) return;
+
+    var cy = cytoscape({
+        container: document.getElementById('cy'),
+        elements: graphData.nodes.concat(graphData.edges),
+        layout: '{{ direction }}' === 'tree'
+            ? { name: 'breadthfirst', directed: true, spacingFactor: 1.5, roots: graphData.nodes.filter(n => n.classes === 'root').map(n => n.data.id) }
+            : { name: 'dagre', rankDir: '{{ direction }}', nodeSep: 50, rankSep: 80 },
+        style: [
+            {
+                selector: 'node',
+                style: {
+                    'label': 'data(label)',
+                    'color': '#fff',
+                    'font-size': '11px',
+                    'text-wrap': 'wrap',
+                    'text-max-width': '120px',
+                    'text-valign': 'center',
+                    'text-halign': 'center',
+                    'width': 'label',
+                    'height': 40,
+                    'padding': '10px',
+                    'shape': 'roundrectangle'
+                }
+            },
+            {
+                selector: 'node[status="done"]',
+                style: { 'background-color': '#166534' }
+            },
+            {
+                selector: 'node[status="work"]',
+                style: { 'background-color': '#1e40af' }
+            },
+            {
+                selector: 'node[status="review"]',
+                style: { 'background-color': '#6b21a8' }
+            },
+            {
+                selector: 'node[status="blocked"]',
+                style: { 'background-color': '#991b1b' }
+            },
+            {
+                selector: 'node[status="queue"]',
+                style: { 'background-color': '#374151' }
+            },
+            {
+                selector: 'node[?is_root]',
+                style: { 'border-width': 3, 'border-color': '#60a5fa' }
+            },
+            {
+                selector: 'edge',
+                style: {
+                    'width': 2,
+                    'line-color': '#6b7280',
+                    'target-arrow-color': '#6b7280',
+                    'target-arrow-shape': 'triangle',
+                    'curve-style': '{{ edges }}',
+                    'source-endpoint': 'outside-to-node',
+                    'target-endpoint': 'outside-to-node'
+                }
+            }
+        ]
+    });
+
+    cy.on('tap', 'node', function(evt) {
+        var node = evt.target;
+        var id = node.id();
+        // If already expanded, collapse
+        if (node.data('expanded')) {
+            cy.elements('node[parent_id="' + id + '"], edge[source="' + id + '"][child]').remove();
+            node.data('expanded', false);
+            cy.layout({ name: '{{ direction }}' === 'tree' ? 'breadthfirst' : 'dagre', rankDir: '{{ direction }}', nodeSep: 50, rankSep: 80, animate: true, directed: true, roots: graphData.nodes.filter(function(n){return n.classes==='root'}).map(function(n){return n.data.id}) }).run();
+            return;
+        }
+        // Fetch children
+        fetch('/arcs/' + id + '/children-json')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (!data.nodes || data.nodes.length === 0) {
+                    // No children: open modal instead
+                    htmx.ajax('GET', '/item/' + id, '#modal-body');
                     document.getElementById('detail-modal').classList.remove('hidden');
                     return;
                 }
-            }
-        }
+                // Add child nodes as smaller circles
+                data.nodes.forEach(function(n) {
+                    n.data.parent_id = id;
+                    cy.add({ data: n.data, style: { 'width': 30, 'height': 30, 'font-size': '9px', 'shape': 'ellipse' } });
+                });
+                data.edges.forEach(function(e) {
+                    e.data.child = true;
+                    cy.add({ data: e.data });
+                });
+                node.data('expanded', true);
+                cy.layout({ name: '{{ direction }}' === 'tree' ? 'breadthfirst' : 'dagre', rankDir: '{{ direction }}', nodeSep: 50, rankSep: 80, animate: true, directed: true, roots: graphData.nodes.filter(function(n){return n.classes==='root'}).map(function(n){return n.data.id}) }).run();
+            });
     });
+})();
 </script>
-
-<!-- Hidden data for ID mapping -->
-{% for c in children %}
-<span data-item-id="{{ c.id }}" class="hidden"></span>
-{% endfor %}
 {% endblock %}
