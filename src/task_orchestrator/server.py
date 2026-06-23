@@ -16,6 +16,14 @@ WorkItems flow: queue → work → review → done. Use triggers: start, complet
 Start sessions with get_context() to see current state. Use get_next_item() for priority-ranked next action.""",
 )
 
+import time as _time
+_start_time = _time.time()
+
+@mcp.custom_route("/health", methods=["GET"])
+async def health_check(request):
+    from starlette.responses import JSONResponse
+    return JSONResponse({"status": "healthy", "version": "1.2.0", "uptime_seconds": int(_time.time() - _start_time)})
+
 
 def _json(obj) -> str:
     return json.dumps(obj, default=str)
