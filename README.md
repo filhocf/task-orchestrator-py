@@ -45,8 +45,8 @@ This started as a Python port of [jpicklyk/task-orchestrator](https://github.com
 # Run directly (no install needed)
 uvx task-orchestrator-py
 
-# Or install globally
-pip install task-orchestrator-py
+# Or install as a tool
+uv tool install task-orchestrator-py
 ```
 
 ### MCP Client Configuration
