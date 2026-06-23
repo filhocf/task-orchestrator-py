@@ -110,6 +110,31 @@ If `TASK_ORCHESTRATOR_DB` is not set, defaults to `~/.task-orchestrator/tasks.db
 |------|-------------|
 | `manage_schemas` | List, inspect, check gate status for items, reload config. |
 
+### Workspaces & Context
+
+| Tool | Description |
+|------|-------------|
+| `manage_workspaces` | Create/update/delete workspace configs (tag groups, repos, conventions). |
+| `get_workspace_context` | Workspace payload at 3 verbosity levels: minimal, standard, full. |
+| `get_execution_stack` | Current execution stack — active and suspended work frames for session resume. |
+| `get_metrics` | Throughput, lead time, WIP count, stale ratio over configurable lookback. |
+| `get_project_graph_metrics` | Critical path, impact scores, bottlenecks in the dependency graph. |
+
+### Archive & Checkpoints
+
+| Tool | Description |
+|------|-------------|
+| `manage_archive` | Auto-archive completed items older than N days. Stats and list operations. |
+| `manage_checkpoints` | Create/list/restore/verify JSON snapshots for backup and multi-machine sync. |
+| `export_graph` / `import_graph` | Full graph export/import as JSON. Supports merge and replace modes. |
+
+### Health
+
+```bash
+curl http://localhost:3201/health
+# {"status": "healthy", "version": "1.2.1", "uptime_seconds": 3600}
+```
+
 ## Workflow
 
 ```
@@ -252,6 +277,14 @@ Cycle detection prevents circular dependencies. `relates_to` type creates inform
 |----------|---------|-------------|
 | `TASK_ORCHESTRATOR_DB` | `~/.task-orchestrator/tasks.db` | SQLite database path |
 | `TASK_ORCHESTRATOR_CONFIG` | `.taskorchestrator/config.yaml` | Note schema config path |
+| `MCP_TRANSPORT` | `stdio` | Transport: `stdio` or `streamable-http` |
+| `MCP_PORT` | `3201` | HTTP port (when using streamable-http) |
+
+## Recent Additions (v1.2.x)
+
+- **`/health` endpoint** — GET returns `{status, version, uptime_seconds}` for probes
+- **Reparenting** — items can be moved between parents via `manage_items(update, parent_id=...)`
+- **Web UI** — Kanban board with swimlanes by arc (`task-orchestrator-ui` command)
 
 ## MCP Prompts
 
