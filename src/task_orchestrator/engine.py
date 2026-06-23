@@ -268,8 +268,22 @@ def update_item(item_id: str, **fields) -> dict:
             "properties",
             "due_at",
             "schedule",
+            "parent_id",
         }
-        updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
+        if "parent_id" in fields:
+            new_parent = fields["parent_id"]
+            if new_parent:
+                row = conn.execute("SELECT id FROM work_items WHERE id=?", (new_parent,)).fetchone()
+                if not row:
+                    raise ToolError("NOT_FOUND", f"Parent {new_parent} not found", "parent_id")
+                if new_parent == item_id:
+                    raise ToolError("VALIDATION", "Item cannot be its own parent", "parent_id")
+                depth = _get_depth(conn, new_parent)
+                if depth >= 3:
+                    raise ToolError("VALIDATION", "Max nesting depth (4) exceeded", "parent_id")
+            else:
+                fields["parent_id"] = None
+        updates = {k: v for k, v in fields.items() if k in allowed and (v is not None or k == "parent_id")}
         if not updates:
             raise ToolError("VALIDATION", "No valid fields to update")
         if "schedule" in updates:

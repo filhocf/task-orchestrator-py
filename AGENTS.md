@@ -25,6 +25,7 @@ src/task_orchestrator/
 - **Storage**: single SQLite file (`~/.task-orchestrator/tasks.db`). WAL mode enabled.
 - **State machine**: queue → work → review → done. Triggers: start, complete, block, hold, resume, cancel, reopen.
 - **Dependencies**: `from_id` blocks `to_id`. Configurable `unblock_at` (done, review, work).
+- **Reparenting**: Items can be reparented via update (parent_id field). Max depth: 4 levels. Set parent_id to "none" to unparent.
 - **Workspaces**: tag-based filtering. Config in `workspaces.json`.
 - **Transport**: `MCP_TRANSPORT=streamable-http` (default) or `stdio`. Port via `MCP_PORT` (default 3201).
 

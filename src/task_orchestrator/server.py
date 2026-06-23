@@ -68,6 +68,7 @@ def manage_items(
     Operations: create, update, delete.
     Priority: critical, high, medium, low. Complexity: 1-10.
     Items support hierarchy via parent_id (max 4 levels deep).
+    Update: parent_id can be changed (reparenting). Set to "none" to unparent.
     Batch create: pass items_json as JSON array of item objects.
     Batch delete: pass ids_json as JSON array of item IDs. Use recursive=true to delete descendants.
     due_at: optional ISO 8601 datetime string for due date (e.g. '2025-12-31T23:59:59+00:00').
@@ -118,6 +119,10 @@ def manage_items(
                 kwargs["properties"] = properties
             if due_at:
                 kwargs["due_at"] = due_at
+            if parent_id and parent_id.lower() in ("none", "null", "unparent"):
+                kwargs["parent_id"] = None
+            elif parent_id:
+                kwargs["parent_id"] = parent_id
             return _json(engine.update_item(item_id, **kwargs))
         elif operation == "delete":
             if ids_json:
