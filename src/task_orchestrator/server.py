@@ -2,6 +2,7 @@
 
 import json
 from mcp.server.fastmcp import FastMCP
+import time as _time
 from . import db, engine
 from .engine import ToolError
 from .schemas import get_schemas, load_schemas, get_schema_for_item
@@ -16,7 +17,6 @@ WorkItems flow: queue → work → review → done. Use triggers: start, complet
 Start sessions with get_context() to see current state. Use get_next_item() for priority-ranked next action.""",
 )
 
-import time as _time
 _start_time = _time.time()
 
 @mcp.custom_route("/health", methods=["GET"])

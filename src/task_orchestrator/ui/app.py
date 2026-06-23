@@ -87,9 +87,9 @@ def board(request: Request, workspace: str, sort: str = "asc", sort_by: str = "a
     lanes = _build_swimlanes(columns)
     # Sort lanes
     if sort_by == "open":
-        lanes = sorted(lanes, key=lambda l: l["open_count"], reverse=(sort != "asc"))
+        lanes = sorted(lanes, key=lambda ln: ln["open_count"], reverse=(sort != "asc"))
     else:
-        lanes = sorted(lanes, key=lambda l: l["title"].lower(), reverse=(sort == "desc"))
+        lanes = sorted(lanes, key=lambda ln: ln["title"].lower(), reverse=(sort == "desc"))
     return templates.TemplateResponse(
         request,
         "board.html",

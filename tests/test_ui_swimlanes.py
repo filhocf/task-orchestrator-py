@@ -1,5 +1,4 @@
 """Tests for kanban board swimlane logic."""
-import pytest
 from unittest.mock import patch
 
 import sys
@@ -127,6 +126,6 @@ class TestBuildSwimlanes:
             "done": [],
         }
         lanes = _build_swimlanes(columns)
-        other = next((l for l in lanes if l["id"] == "__other__"), None)
+        other = next((ln for ln in lanes if ln["id"] == "__other__"), None)
         assert other is not None
         assert other["open_count"] == 1

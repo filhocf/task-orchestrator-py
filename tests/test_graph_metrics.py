@@ -151,8 +151,8 @@ class TestGetProjectGraphMetrics:
         """Items in queue with no pending deps are parallelizable."""
         a = _create("A")
         b = _create("B")
-        c = _create("C")  # independent, queue
-        d = _create("D")  # independent, queue
+        _create("C")  # independent, queue
+        _create("D")  # independent, queue
         _dep(a["id"], b["id"])  # B blocked by A
 
         result = get_project_graph_metrics()
