@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Planned
 - `get_project_graph_metrics` — critical path, max fan-out, distance to goal
 
+## [1.2.1] - 2026-06-23
+
+### Added
+- `parent_id` is now updatable via `manage_items(update)` — enables reparenting items between ARCs
+- Validation: parent exists, no self-parent, max depth 4. Set to `""` to unparent.
+
+## [1.2.0] - 2026-06-23
+
+### Added
+- `/health` endpoint via `@mcp.custom_route` (GET, returns status/version/uptime)
+
 ## [1.1.0] - 2026-06-08
 
 ### Added

@@ -22,7 +22,7 @@ _start_time = _time.time()
 @mcp.custom_route("/health", methods=["GET"])
 async def health_check(request):
     from starlette.responses import JSONResponse
-    return JSONResponse({"status": "healthy", "version": "1.2.0", "uptime_seconds": int(_time.time() - _start_time)})
+    return JSONResponse({"status": "healthy", "version": "1.2.1", "uptime_seconds": int(_time.time() - _start_time)})
 
 
 def _json(obj) -> str:
